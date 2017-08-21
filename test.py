@@ -56,8 +56,8 @@ for n in N:
 
 
 plt.loglog(N, np.array(t1)/N,label="Potential (Tree)")
-plt.loglog(N, np.array(t2)/N,label="Potential (Brute Force)")
-plt.loglog(N, np.array(t3)/N,label="Acceleration (Tree)")
+plt.loglog(N, np.array(t2)/N,label="Acceleration (Tree)")
+plt.loglog(N, np.array(t3)/N,label="Potential (Brute Force)")
 plt.loglog(N, np.array(t4)/N, label="Acceleration (Brute Force)")
 plt.legend(loc=4)
 plt.ylabel("Time per particle (s)")
