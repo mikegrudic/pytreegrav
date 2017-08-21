@@ -1,5 +1,5 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like
-from numba import njit
+from numba import njit, prange
 
 @njit
 def PotentialWalk(x, phi, node, theta=0.7):                

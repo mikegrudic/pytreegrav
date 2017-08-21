@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 
 parallel = False
 theta = 0.7
-N = 2**np.arange(4,20)
+N = 2**np.arange(4,21)
 t1 = []
 t2 = []
 t3 = []
@@ -34,7 +34,7 @@ for n in N:
     atree = Accel(x, m, parallel=parallel,theta=theta)
     t = time() - t
     t2.append(t)
-    if n < 5e5:
+    if n <= 64**3:
         t = time()
         phibrute = BruteForcePotential(x,m)
         t = time() - t
@@ -60,7 +60,7 @@ plt.loglog(N, np.array(t2)/N,label="Potential (Brute Force)")
 plt.loglog(N, np.array(t3)/N,label="Acceleration (Tree)")
 plt.loglog(N, np.array(t4)/N, label="Acceleration (Brute Force)")
 plt.legend(loc=4)
-plt.ylabel("Time per particle")
+plt.ylabel("Time per particle (s)")
 plt.xlabel("N")
 plt.savefig("CPU_Time.png")
 plt.clf()
