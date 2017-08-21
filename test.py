@@ -34,7 +34,7 @@ for n in N:
     atree = Accel(x, m, parallel=parallel,theta=theta)
     t = time() - t
     t2.append(t)
-    if n <= 64**3:
+    if n < 64**3:
         t = time()
         phibrute = BruteForcePotential(x,m)
         t = time() - t

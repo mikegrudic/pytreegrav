@@ -22,6 +22,17 @@ def Potential(x, m, G=1., theta=1., parallel=False):
         return GetPotential(np.float64(x),tree,G,theta)
 
 def Accel(x, m, G=1., theta=1., parallel=False):
+ """Returns the approximate gravitational acceleration for a set of particles with positions x and masses m.
+
+    Arguments:
+    x -- shape (N,3) array of particle positions
+    m -- shape (N,) array of particle masses
+
+    Keyword arguments:
+    G -- gravitational constant (default 1.0)
+    theta -- cell opening angle used to control force accuracy; smaller is faster but more accurate. (default 1.0, gives ~1% accuracy)
+    parallel -- If True, will parallelize the force summation over all available cores. (default False)
+    """            
     tree = ConstructKDTree(np.float64(x),np.float64(m))
     result = zeros_like(x)
     if parallel:
