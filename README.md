@@ -1,7 +1,7 @@
 
 # Introduction
 
-pykdgrav is a package that implements the Barnes-Hut method for computing the combined gravitational field and/or potential of N particles with O(N log N) scaling. We implement a kd-tree as a numba jitclass to achieve much higher peformance than the equivalent pure Python implementation, without writing a single line of C or Cython.
+pykdgrav is a package that implements the Barnes-Hut method for computing the combined gravitational field and/or potential of N particles with O(N log N) scaling. We implement a kd-tree as a [Numba jitclass](http://numba.pydata.org/numba-doc/dev/user/jitclass.html) to achieve much higher peformance than the equivalent pure Python implementation, without writing a single line of C or Cython.
 
 Despite the similar name, this project has no affiliation with the N-body code [pkdgrav](https://bitbucket.org/dpotter/pkdgrav3), however it is where I got the idea to use a kd-tree instead of an octree.
 
