@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 
 parallel = False
 theta = 0.7
-N = 2**np.arange(4,21)
+N = 2**np.arange(6,21)
 t1 = []
 t2 = []
 t3 = []
