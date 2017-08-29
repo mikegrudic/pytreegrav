@@ -5,15 +5,11 @@ from .kernel import *
 @njit
 def PotentialWalk(x, phi, node, theta=0.7):
     r = sqrt((x[0]-node.COM[0])**2 + (x[1]-node.COM[1])**2 + (x[2]-node.COM[2])**2)
-    
     if node.IsLeaf:
-        if r == 0 and h: phi -= node.mass / node.h
-        elif r < node.h:
+        if r>0:
             phi += node.mass * PotentialKernel(r,node.h)
-        else:
-            phi -= node.mass/r
-    elif r > max(node.size/theta, node.h):
-        phi -= node.mass / r
+    elif r > max(node.size/theta, node.h+node.size):
+        phi -= node.mass/r
     else:
         if node.HasLeft:
             phi = PotentialWalk(x, phi, node.left, theta)
@@ -35,7 +31,7 @@ def ForceWalk(x, g, node, theta=0.7):
                 mr3inv = node.mass * ForceKernel(r, node.h)
             else:
                 mr3inv = node.mass/(r*r*r)
-        elif r > max(node.size/theta + node.delta, node.h):
+        elif r > max(node.size/theta + node.delta, node.h+node.size):
             add_accel = True        
             mr3inv = node.mass/(r*r*r)
 

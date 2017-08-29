@@ -3,10 +3,11 @@ from pykdgrav.bruteforce import *
 import numpy as np
 from time import time
 from matplotlib import pyplot as plt
+from meshoid import meshoid
 
 parallel = False
 theta = 0.7
-N = 2**np.arange(6,21)
+N = 2**np.arange(6,20)
 t1 = []
 t2 = []
 t3 = []
@@ -23,15 +24,18 @@ for n in N:
     print(n)
     x = np.random.rand(n)
     r = np.sqrt( x**(2./3) * (1+x**(2./3) + x**(4./3))/(1-x**2))
+    phi_exact = -(1+r**2)**-0.5
     x = np.random.normal(size=(n,3))
     x = (x.T * r/np.sum(x**2,axis=1)**0.5).T
     m = np.repeat(1./n,n)
+    #h = meshoid(x).h  #m**(1./3)
+    h = np.zeros_like(m)
     t = time()
-    phitree = Potential(x, m, parallel=parallel,theta=theta)
+    phitree = Potential(x, m, h, parallel=parallel,theta=theta)
     t = time() -t 
     t1.append(t)
     t = time()
-    atree = Accel(x, m, parallel=parallel,theta=theta)
+    atree = Accel(x, m, h, parallel=parallel,theta=theta)
     t = time() - t
     t2.append(t)
     if n < 64**3:
