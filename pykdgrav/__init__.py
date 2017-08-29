@@ -2,7 +2,7 @@ import numpy as np
 from .kdtree import *
 from .treewalk import *
 
-def Potential(x, m, G=1., theta=1., parallel=False):
+def Potential(x, m, softening=None, G=1., theta=1., parallel=False):
     """Returns the approximate gravitational potential for a set of particles with positions x and masses m.
 
     Arguments:
@@ -14,14 +14,16 @@ def Potential(x, m, G=1., theta=1., parallel=False):
     theta -- cell opening angle used to control force accuracy; smaller is faster but more accurate. (default 1.0, gives ~1% accuracy)
     parallel -- If True, will parallelize the force summation over all available cores. (default False)
     """
-    tree = ConstructKDTree(np.float64(x),np.float64(m))
+    if softening is None:
+        softening = np.zeros_like(m)
+    tree = ConstructKDTree(np.float64(x),np.float64(m), np.float64(softening))
     result = zeros(len(m))
     if parallel:
         return GetPotentialParallel(np.float64(x),tree,G,theta)
     else:
         return GetPotential(np.float64(x),tree,G,theta)
 
-def Accel(x, m, G=1., theta=1., parallel=False):
+def Accel(x, m, softening=None, G=1., theta=1., parallel=False):
     """Returns the approximate gravitational acceleration for a set of particles with positions x and masses m.
 
     Arguments:
@@ -31,8 +33,11 @@ def Accel(x, m, G=1., theta=1., parallel=False):
     Keyword arguments:
     G -- gravitational constant (default 1.0)
     theta -- cell opening angle used to control force accuracy; smaller is faster but more accurate. (default 1.0, gives ~1% accuracy)
-    parallel -- If True, will parallelize the force summation over all available cores. (default False) """            
-    tree = ConstructKDTree(np.float64(x),np.float64(m))
+    parallel -- If True, will parallelize the force summation over all available cores. (default False) """
+    
+    if softening is None:
+        softening = np.zeros_like(m)
+    tree = ConstructKDTree(np.float64(x),np.float64(m), np.float64(softening))
     result = zeros_like(x)
     if parallel:
         return GetAccelParallel(np.float64(x), tree, G, theta)

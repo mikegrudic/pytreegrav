@@ -1,17 +1,24 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like
 from numba import njit, prange
+from .kernel import *
 
 @njit
-def PotentialWalk(x, phi, node, theta=0.7):                
+def PotentialWalk(x, phi, node, theta=0.7):
     r = sqrt((x[0]-node.COM[0])**2 + (x[1]-node.COM[1])**2 + (x[2]-node.COM[2])**2)
-    if r>0:
-        if node.size < theta * r or node.IsLeaf:
-            phi -= node.mass / r
+    
+    if node.IsLeaf:
+        if r == 0 and h: phi -= node.mass / node.h
+        elif r < node.h:
+            phi += node.mass * PotentialKernel(r,node.h)
         else:
-            if node.HasLeft:
-                phi = PotentialWalk(x, phi, node.left, theta)
-            if node.HasRight:
-                phi = PotentialWalk(x, phi, node.right,  theta)
+            phi -= node.mass/r
+    elif r > max(node.size/theta, node.h):
+        phi -= node.mass / r
+    else:
+        if node.HasLeft:
+            phi = PotentialWalk(x, phi, node.left, theta)
+        if node.HasRight:
+            phi = PotentialWalk(x, phi, node.right,  theta)
     return phi
 
 @njit
@@ -20,17 +27,27 @@ def ForceWalk(x, g, node, theta=0.7):
     dy = node.COM[1]-x[1]
     dz = node.COM[2]-x[2]
     r = sqrt(dx*dx + dy*dy + dz*dz)
+    add_accel = False
     if r>0:
-        if node.IsLeaf or r > node.size/theta + node.delta:
+        if node.IsLeaf:
+            add_accel = True
+            if r < node.h:
+                mr3inv = node.mass * ForceKernel(r, node.h)
+            else:
+                mr3inv = node.mass/(r*r*r)
+        elif r > max(node.size/theta + node.delta, node.h):
+            add_accel = True        
             mr3inv = node.mass/(r*r*r)
-            g[0] += dx*mr3inv
-            g[1] += dy*mr3inv
-            g[2] += dz*mr3inv
-        else:
-            if node.HasLeft:
-                g = ForceWalk(x, g, node.left, theta)
-            if node.HasRight:
-                g = ForceWalk(x, g, node.right, theta)
+
+    if add_accel:
+        g[0] += dx*mr3inv
+        g[1] += dy*mr3inv
+        g[2] += dz*mr3inv
+    else:
+        if node.HasLeft:
+            g = ForceWalk(x, g, node.left, theta)
+        if node.HasRight:
+            g = ForceWalk(x, g, node.right, theta)
     return g
 
 @njit

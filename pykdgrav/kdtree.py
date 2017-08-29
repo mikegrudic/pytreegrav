@@ -11,6 +11,8 @@ spec = [
     ('points', float64[:,:]),
     ('masses', float64[:]),
     ('Npoints', int64),
+    ('h', float64),
+    ('softening', float64[:]),
     ('mass', float64),
     ('COM', float64[:]),
     ('IsLeaf', boolean),
@@ -22,7 +24,7 @@ spec = [
 
 @jitclass(spec)
 class KDNode(object):
-    def __init__(self, points, masses):
+    def __init__(self, points, masses, softening):
         self.bounds = empty((3,2))
         self.bounds[0,0] = points[:,0].min()
         self.bounds[0,1] = points[:,0].max()
@@ -30,6 +32,9 @@ class KDNode(object):
         self.bounds[1,1] = points[:,1].max()
         self.bounds[2,0] = points[:,2].min()
         self.bounds[2,1] = points[:,2].max()
+
+        self.softening = softening
+        self.h = self.softening.max()
         
         self.size = max(self.bounds[0,1]-self.bounds[0,0],self.bounds[1,1]-self.bounds[1,0],self.bounds[2,1]-self.bounds[2,0])
         self.points = points
@@ -63,21 +68,24 @@ class KDNode(object):
         index = (x<med)
 
         if np.any(index):
-            self.left = KDNode(self.points[index], self.masses[index])
+            self.left = KDNode(self.points[index], self.masses[index], self.softening[index])
             self.HasLeft = True
         index = np.invert(index)
         if np.any(index):
-            self.right = KDNode(self.points[index],self.masses[index])
+            self.right = KDNode(self.points[index],self.masses[index], self.softening[index])
             self.HasRight = True
-        self.points = zeros((1,1))
-        self.masses = zeros(1)   
+        self.points = empty((1,1))
+        self.masses = empty(1)
+        self.softening = empty(1)
         return True
 
 node_type.define(KDNode.class_type.instance_type)
 
 @jit
-def ConstructKDTree(x, m):
-    root = KDNode(x, m)
+def ConstructKDTree(x, m, softening=None):
+    if softening is None:
+        softening = np.zeros_like(m)
+    root = KDNode(x, m, softening)
     
     nodes = np.array([root,],dtype=KDNode)
     new_nodes = empty(2,dtype=KDNode)
