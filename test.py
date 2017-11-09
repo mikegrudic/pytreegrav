@@ -7,7 +7,7 @@ from meshoid import meshoid
 
 parallel = False
 theta = 0.7
-N = 2**np.arange(6,20)
+N = 2**np.arange(6,17)
 t1 = []
 t2 = []
 t3 = []
@@ -51,7 +51,7 @@ for n in N:
         amag = ((np.sum(abrute**2,axis=1) + np.sum(atree**2,axis=1))/2)
         aerror = np.sum((abrute-atree)**2,axis=1)
         force_error.append((aerror/amag).mean()**0.5)
-        #print(error[-1])
+        print(force_error[-1])
     else:
         t4.append(0)
         t3.append(0)
