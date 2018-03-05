@@ -3,7 +3,6 @@ from pykdgrav.bruteforce import *
 import numpy as np
 from time import time
 from matplotlib import pyplot as plt
-from meshoid import meshoid
 
 parallel = False
 theta = 0.7
@@ -28,7 +27,6 @@ for n in N:
     x = np.random.normal(size=(n,3))
     x = (x.T * r/np.sum(x**2,axis=1)**0.5).T
     m = np.repeat(1./n,n)
-    #h = meshoid(x).h  #m**(1./3)
     h = np.zeros_like(m)
     t = time()
     phitree = Potential(x, m, h, parallel=parallel,theta=theta)
