@@ -40,7 +40,7 @@ def Accel(x, m, softening=None, G=1., theta=1., parallel=False, tree=None):
     
     if softening is None:
         softening = np.zeros_like(m)
-    if not tree = ConstructKDTree(np.float64(x),np.float64(m), np.float64(softening))
+    if not tree: tree = ConstructKDTree(np.float64(x),np.float64(m), np.float64(softening))
     result = zeros_like(x)
     if parallel:
         return GetAccelParallel(np.float64(x), tree, G, theta)
@@ -49,7 +49,7 @@ def Accel(x, m, softening=None, G=1., theta=1., parallel=False, tree=None):
 
 def CorrelationFunction(x, m, rbins, frac=1., tree=None):
     N = len(x)
-    if not tree = ConstructKDTree(np.float64(x), np.float64(m))
+    if not tree: tree = ConstructKDTree(np.float64(x), np.float64(m))
     counts = zeros(len(rbins)-1, dtype=np.int64)
     for i in range(N):
         if np.random.rand() < frac:
