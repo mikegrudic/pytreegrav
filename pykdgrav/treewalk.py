@@ -1,10 +1,26 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like
 from numba import njit, prange
 from .kernel import *
+import numpy as np
 
-@njit
-def PotentialWalk(x, phi, node, theta=0.7):
-    r = sqrt((x[0]-node.COM[0])**2 + (x[1]-node.COM[1])**2 + (x[2]-node.COM[2])**2)
+@njit(fastmath=True)
+def PotentialWalk(pos, node, phi, theta=0.7):
+    """Returns the gravitational field at position x by performing the Barnes-Hut treewalk using the provided KD-tree node
+
+    Arguments:
+    pos - (3,) array containing position of interest
+    node - KD-tree to walk
+
+    Keyword arguments:
+    g - (3,) array containing initial value of the gravitational field, used when adding up the contributions in recursive calls
+    softening - softening radius of the particle at which the force is being evaluated - needed if you want the short-range force to be momentum-conserving
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0, gives ~1\
+% accuracy)
+    """
+    dx = node.COM[0]-pos[0]
+    dy = node.COM[1]-pos[1]
+    dz = node.COM[2]-pos[2]
+    r = sqrt(dx*dx + dy*dy + dz*dz)
     if node.IsLeaf:
         if r>0:
             phi += node.mass * PotentialKernel(r,node.h)
@@ -12,93 +28,79 @@ def PotentialWalk(x, phi, node, theta=0.7):
         phi -= node.mass/r
     else:
         if node.HasLeft:
-            phi = PotentialWalk(x, phi, node.left, theta)
+            phi = PotentialWalk(pos, node.left, phi, theta=theta)
         if node.HasRight:
-            phi = PotentialWalk(x, phi, node.right,  theta)
+            phi = PotentialWalk(pos, node.right, phi, theta=theta)
     return phi
 
-@njit
-def ForceWalk(x, g, node, theta=0.7):
-    dx = node.COM[0]-x[0]
-    dy = node.COM[1]-x[1]
-    dz = node.COM[2]-x[2]
+@njit(fastmath=True)
+def ForceWalk(pos, node, g, softening=0.0, theta=0.7):
+    """Returns the gravitational field at position pos by performing the Barnes-Hut treewalk using the provided KD-tree node
+
+    Arguments:
+    pos - (3,) array containing position of interest
+    node - KD-tree to walk
+
+    Parameters:
+    g - (3,) array containing initial value of the gravitational field, used when adding up the contributions in recursive calls
+    softening - softening radius of the particle at which the force is being evaluated - needed if you want the short-range force to be momentum-conserving
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0, gives ~1\
+% accuracy)
+    """
+    dx = node.COM[0]-pos[0]
+    dy = node.COM[1]-pos[1]
+    dz = node.COM[2]-pos[2]
     r = sqrt(dx*dx + dy*dy + dz*dz)
     add_accel = False
+    fac = 0
     if r>0:
         if node.IsLeaf:
             add_accel = True
-            if r < node.h:
-                mr3inv = node.mass * ForceKernel(r, node.h)
+            if r < max(node.h, softening):
+                fac = node.mass * ForceKernel(r, max(node.h, softening))
             else:
-                mr3inv = node.mass/(r*r*r)
+                fac = node.mass/(r*r*r)
         elif r > max(node.size/theta + node.delta, node.h+node.size):
-            add_accel = True        
-            mr3inv = node.mass/(r*r*r)
+            add_accel = True  
+            fac = node.mass/(r*r*r)
 
     if add_accel:
-        g[0] += dx*mr3inv
-        g[1] += dy*mr3inv
-        g[2] += dz*mr3inv
+        g[0] += dx*fac
+        g[1] += dy*fac
+        g[2] += dz*fac
     else:
         if node.HasLeft:
-            g = ForceWalk(x, g, node.left, theta)
+            g = ForceWalk(pos, node.left, g, softening=softening, theta=theta)
         if node.HasRight:
-            g = ForceWalk(x, g, node.right, theta)
+            g = ForceWalk(pos, node.right, g, softening=softening, theta=theta)
     return g
 
-@njit
-def CorrelationWalk(counts, rbins, x, node):
-    #idea: if the center of the node is in a bin and the bounds also lie in the same bin, add to that bin. If all bounds are outside all bins, return 0. Else,repeat for children
-    dx = 0.5*(node.bounds[0,0]+node.bounds[0,1])-x[0]
-    dy = 0.5*(node.bounds[1,0]+node.bounds[1,1])-x[1]
-    dz = 0.5*(node.bounds[2,0]+node.bounds[2,1])-x[2]
-    r = (dx**2 + dy**2 + dz**2)**0.5
-
-    sizebound = node.size*1.73
-    rmin, rmax = r-sizebound/2, r+sizebound/2
-    if rmin > rbins[-1]:
-        return
-    if rmax < rbins[0]:
-        return
-
-    N = rbins.shape[0]
-
-    for i in range(1,N):
-        if rbins[i] > r: break
-        
-    if rbins[i] > rmax and rbins[i-1] < rmin:
-        counts[i-1] += node.Npoints
-    else:
-        if node.HasLeft:
-            CorrelationWalk(counts, rbins, x, node.left)
-        if node.HasRight:
-            CorrelationWalk(counts, rbins, x, node.right)
-    return
-
-@njit(parallel=True)
-def GetPotentialParallel(x,tree, G, theta):
-    result = empty(x.shape[0])
-    for i in prange(x.shape[0]):
-        result[i] = G*PotentialWalk(x[i],0.,tree,theta)
+@njit(parallel=True, fastmath=True)
+def GetPotentialParallel(pos,tree, G, theta):
+    result = empty(pos.shape[0])
+    for i in prange(pos.shape[0]):
+        result[i] = G*PotentialWalk(pos[i], tree, 0., theta=theta)
     return result
 
-@njit
-def GetPotential(x,tree, G, theta):
-    result = empty(x.shape[0])
-    for i in range(x.shape[0]):
-        result[i] = G*PotentialWalk(x[i],0.,tree, theta)
+@njit(fastmath=True)
+def GetPotential(pos,tree, G, theta):
+    result = empty(pos.shape[0])
+    for i in range(pos.shape[0]):
+        result[i] = G*PotentialWalk(pos[i], tree, 0., theta=theta)
     return result
 
-@njit
-def GetAccel(x, tree, G, theta):
-    result = empty(x.shape)
-    for i in range(x.shape[0]):
-        result[i] = G*ForceWalk(x[i], zeros(3), tree, theta)
+@njit(fastmath=True)
+def GetAccel(pos, tree, softening=None, G=1., theta=0.7):
+    if softening is None: softening = zeros(pos.shape[0])
+    result = empty(pos.shape)
+    for i in range(pos.shape[0]):
+        result[i] = G*ForceWalk(pos[i], tree, zeros(3), softening=softening[i], theta=theta)
     return result
 
-@njit(parallel=True)
-def GetAccelParallel(x, tree, G, theta):
-    result = empty(x.shape)
-    for i in prange(x.shape[0]):
-        result[i] = G*ForceWalk(x[i], zeros(3), tree, theta)
+@njit(parallel=True, fastmath=True)
+def GetAccelParallel(pos, tree, softening=None, G=1., theta=0.7):
+    if softening is None: softening = zeros(pos.shape[0])    
+    result = empty(pos.shape)
+    for i in prange(pos.shape[0]):
+        result[i] = G*ForceWalk(pos[i], tree, zeros(3), softening=softening[i], theta=theta)
     return result

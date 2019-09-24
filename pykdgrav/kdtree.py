@@ -83,6 +83,8 @@ node_type.define(KDNode.class_type.instance_type)
 
 @jit
 def ConstructKDTree(x, m, softening=None):
+    if len(np.unique(x)) < len(x):
+        raise Exception("Non-unique particle positions are currently not supported by the tree-building algorithm. Consider perturbing your positions with a bit of noise if you really want to proceed.")
     if softening is None:
         softening = np.zeros_like(m)
     root = KDNode(x, m, softening)
@@ -111,4 +113,5 @@ def ConstructKDTree(x, m, softening=None):
         if divisible_nodes:
             nodes = new_nodes[:count]
             new_nodes = empty(count*2, dtype=KDNode)
-    return root        
+    return root
+            

@@ -1,20 +1,20 @@
 from pykdgrav import *
-from pykdgrav.bruteforce import *
+#from pykdgrav.bruteforce import *
 import numpy as np
 from time import time
 from matplotlib import pyplot as plt
 
 parallel = False
 theta = 0.7
-N = 2**np.arange(6,17)
+N = 2**np.arange(6,18)
 t1 = []
 t2 = []
 t3 = []
 t4 = []
 force_error = []
 phi_error = []
-x = np.random.rand(10**2,3)
-m = np.random.rand(10**2)
+x = np.random.rand(10**1,3)
+m = np.random.rand(10**1)
 Accel(x,m,parallel=parallel)
 BruteForceAccel(x,m)
 Potential(x,m, parallel=parallel)
@@ -30,7 +30,7 @@ for n in N:
     h = np.zeros_like(m)
     t = time()
     phitree = Potential(x, m, h, parallel=parallel,theta=theta)
-    t = time() -t 
+    t = time() - t 
     t1.append(t)
     t = time()
     atree = Accel(x, m, h, parallel=parallel,theta=theta)
@@ -68,7 +68,7 @@ plt.savefig("CPU_Time.png")
 plt.clf()
 plt.loglog(N, phi_error, label="Potential error")
 plt.loglog(N, force_error, label="Acceleration error")
-print(force_error)
+print(force_error, phi_error)
 plt.legend()
 plt.savefig("Errors.png")
 

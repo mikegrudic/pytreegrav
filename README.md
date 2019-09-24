@@ -12,8 +12,7 @@ First let's import the stuff we want and generate some particle positions and ma
 
 ```python
 import numpy as np
-from pykdgrav import Accel, Potential
-from pykdgrav.bruteforce import *
+from pykdgrav import Accel, Potential, BruteForcePotential, BruteForceAccel
 ```
 
 
@@ -56,6 +55,7 @@ pykdgrav also supports OpenMP multithreading, but no support for higher parallel
 Nice, basically perfect scaling. 
 
 The treecode will almost always be faster than brute force for particle counts greater than ~10000. Below is a tougher benchmark for more realistic problem, run on a single core on my laptop. The particles were arranged in a Plummer distribution and an opening angle of 0.7 was used instead of the default 1:
+
 ![Benchmark](./CPU_Time.png)
 
 The method is approximate, using a Barnes-Hut opening angle of 1 by default; we can check the RMS force error here:
@@ -85,8 +85,7 @@ print("RMS force error: %g"%np.sqrt(np.average(delta_a/amag)))
 
 # Planned Features
 
-* Greater OpenMP parallelism, e.g. in the tree-build algorithm.
+* Greater parallelism, e.g. in the tree-build algorithm, support for massive parallelism
 * Support for computing approximate correlation and structure functions.
-* Gravitational softening with abitrary kernels.
 
-Stay tuned!
+Stay tuned! If there is any feature that would make pykdgrav useful for your project, just let me know!
