@@ -41,7 +41,7 @@ Now let's compare the runtimes of the tree methods and brute force methods for c
     Wall time: 1min 2s
 
 
-pykdgrav also supports OpenMP multithreading, but no support for higher parallelism is implemented nor planned. We can make it even faster by running in parallel (here on a dual-core laptop):
+pykdgrav also supports OpenMP multithreading, but no support for higher parallelism is not implemented. We can make it even faster by running in parallel (here on a dual-core laptop):
 
 
 ```python
@@ -84,7 +84,33 @@ print("RMS force error: %g"%np.sqrt(np.average(delta_a/amag)))
 
 # What is I want to evaluate the fields at different points than where the particles are?
 
-You can do that too
+Easy peasy lemon squeezy. First build the tree, then feed the target points into GetPotential or GetAccel.
+
+```python
+from pykdgrav import ConstructKDTree, GetAccel, GetPotential, GetAccelParallel, GetPotentialParallel
+```
+
+```
+# generate the source mass distribution of particles: positions, masses, softenings
+source_points = np.random.normal(size=(10**4,3))
+source_masses = np.repeat(1./len(source_points), len(source_points))
+source_softening = np.repeat(.1, len(source_points))
+
+# construct the tree
+tree = ConstructKDTree(source_points, source_masses, source_softening)
+
+# target points where you wanna know the field values
+target_points = np.random.normal(size=(10**3,3))
+
+# Calculate the fields at the target points
+%timeit target_accel = GetAccel(target_points, tree, G=1., theta=0.7)
+target_potential = GetPotential(target_points, tree, G=1., theta=0.7)
+
+# optionally, can also parallelize over the target points for extra awesomeness. Note that this currently requires softening as a non-optional argument due to a bug in numba
+target_softening = np.zeros(len(target_points))
+target_accel = GetAccelParallel(target_points, tree, target_softening, G=1., theta=0.7)
+target_potential = GetPotentialParallel(target_points, tree, G=1., theta=0.7)
+```
 
 # Planned Features
 
