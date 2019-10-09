@@ -90,7 +90,7 @@ Easy peasy lemon squeezy. First build the tree, then feed the target points into
 from pykdgrav import ConstructKDTree, GetAccel, GetPotential, GetAccelParallel, GetPotentialParallel
 ```
 
-```
+```python
 # generate the source mass distribution of particles: positions, masses, softenings
 source_points = np.random.normal(size=(10**4,3))
 source_masses = np.repeat(1./len(source_points), len(source_points))
