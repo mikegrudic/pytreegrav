@@ -103,7 +103,7 @@ tree = ConstructKDTree(source_points, source_masses, source_softening)
 target_points = np.random.normal(size=(10**3,3))
 
 # Calculate the fields at the target points
-timeit target_accel = GetAccel(target_points, tree, G=1., theta=0.7)
+target_accel = GetAccel(target_points, tree, G=1., theta=0.7)
 target_potential = GetPotential(target_points, tree, G=1., theta=0.7)
 
 # optionally, can also parallelize over the target points for extra awesomeness. Note that this currently requires softening as a non-optional argument due to a bug in numba
