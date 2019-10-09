@@ -98,8 +98,8 @@ def GetAccel(pos, tree, softening=None, G=1., theta=0.7):
     return result
 
 @njit(parallel=True, fastmath=True)
-def GetAccelParallel(pos, tree, softening=None, G=1., theta=0.7):
-    if softening is None: softening = zeros(pos.shape[0])    
+def GetAccelParallel(pos, tree, softening, G=1., theta=0.7):
+#    if softening is None: softening = zeros(len(pos), dtype=np.float64)    
     result = empty(pos.shape)
     for i in prange(pos.shape[0]):
         result[i] = G*ForceWalk(pos[i], tree, zeros(3), softening=softening[i], theta=theta)

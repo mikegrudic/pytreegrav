@@ -82,6 +82,9 @@ print("RMS force error: %g"%np.sqrt(np.average(delta_a/amag)))
 
     RMS force error: 0.0123373
 
+# What is I want to evaluate the fields at different points than where the particles are?
+
+You can do that too
 
 # Planned Features
 
