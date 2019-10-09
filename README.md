@@ -82,7 +82,7 @@ print("RMS force error: %g"%np.sqrt(np.average(delta_a/amag)))
 
     RMS force error: 0.0123373
 
-# What is I want to evaluate the fields at different points than where the particles are?
+# What if I want to evaluate the fields at different points than where the particles are?
 
 Easy peasy lemon squeezy. First build the tree, then feed the target points into GetPotential or GetAccel.
 
