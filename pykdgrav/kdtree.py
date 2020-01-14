@@ -82,11 +82,11 @@ class KDNode(object):
 node_type.define(KDNode.class_type.instance_type)
 
 @jit
-def ConstructKDTree(x, m, softening=None):
-    if len(np.unique(x)) < len(x):
+def ConstructKDTree(x, m, softening):
+    if len(np.unique(x, axis=0) < len(x):
         raise Exception("Non-unique particle positions are currently not supported by the tree-building algorithm. Consider perturbing your positions with a bit of noise if you really want to proceed.")
-    if softening is None:
-        softening = np.zeros_like(m)
+#    if softening == None:
+#        softening = np.zeros_like(m)
     root = KDNode(x, m, softening)
     
     nodes = np.array([root,],dtype=KDNode)
