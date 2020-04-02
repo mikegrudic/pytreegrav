@@ -34,6 +34,7 @@ for n in N:
     t1.append(t)
     t = time()
     atree = Accel(x, m, h, parallel=parallel,theta=theta)
+    print(atree)
     t = time() - t
     t2.append(t)
     if n < 64**3:

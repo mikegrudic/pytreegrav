@@ -60,7 +60,7 @@ def ForceWalk(pos, node, g, softening=0.0, theta=0.7):
                 fac = node.mass * ForceKernel(r, max(node.h, softening))
             else:
                 fac = node.mass/(r*r*r)
-        elif r > max(node.size/theta + node.delta, node.h+node.size):
+        elif r > max(node.size/theta + node.delta, max(node.h,softening)+node.size):
             add_accel = True  
             fac = node.mass/(r*r*r)
 

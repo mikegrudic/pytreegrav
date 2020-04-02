@@ -1,6 +1,7 @@
-from numba import int32, deferred_type, optional, float64, boolean, int64, njit, jit, jitclass, prange
+from numba import int32, deferred_type, optional, float64, boolean, int64, njit, jit, jitclass, prange, types
 import numpy as np
 from numpy import empty, empty_like, zeros, zeros_like, sqrt
+from numba.typed import List
 
 node_type = deferred_type()
 
@@ -54,7 +55,7 @@ class KDNode(object):
                 self.COM[k] /= self.mass
                 self.delta += (0.5*(self.bounds[k,1]+self.bounds[k,0]) - self.COM[k])**2
             self.delta = sqrt(self.delta)
-           
+
         self.HasLeft = False
         self.HasRight = False        
         self.left = None
@@ -62,11 +63,10 @@ class KDNode(object):
 
     def GenerateChildren(self, axis):
         if self.IsLeaf:
-            return False
+            return 0
         x = self.points[:,axis]
         med = (self.bounds[axis,0] + self.bounds[axis,1])/2
         index = (x<med)
-
         if np.any(index):
             self.left = KDNode(self.points[index], self.masses[index], self.softening[index])
             self.HasLeft = True
@@ -77,41 +77,34 @@ class KDNode(object):
         self.points = empty((1,1))
         self.masses = empty(1)
         self.softening = empty(1)
-        return True
+        return 1
 
 node_type.define(KDNode.class_type.instance_type)
 
-@jit
+@njit
 def ConstructKDTree(x, m, softening):
-    if len(np.unique(x, axis=0) < len(x):
+    if len(np.unique(x[:,0])) < len(x):
         raise Exception("Non-unique particle positions are currently not supported by the tree-building algorithm. Consider perturbing your positions with a bit of noise if you really want to proceed.")
-#    if softening == None:
-#        softening = np.zeros_like(m)
     root = KDNode(x, m, softening)
-    
-    nodes = np.array([root,],dtype=KDNode)
-    new_nodes = empty(2,dtype=KDNode)
+    nodes = [root,]
     axis = 0
-    divisible_nodes = True
-    while divisible_nodes:
+    divisible_nodes = 1
+    count = 0
+    while divisible_nodes > 0:
         N = len(nodes)
-        divisible_nodes = False
-        count = 0
-        for i in range(N):
+        divisible_nodes = 0
+        for i in range(count, N): # loop through the nodes we spawned in the previous pass
+            count += 1
             if nodes[i].IsLeaf:
-                continue
+                continue                
             else:
-                divisible_nodes += nodes[i].GenerateChildren(axis)
+                generated_children = nodes[i].GenerateChildren(axis)
+                divisible_nodes += generated_children
                 if nodes[i].HasLeft:
-                    new_nodes[count] = nodes[i].left
-                    count += 1
+                    nodes.append(nodes[i].left)
                 if nodes[i].HasRight:
-                    new_nodes[count] = nodes[i].right
-                    count += 1
+                    nodes.append(nodes[i].right)
                     
         axis = (axis+1)%3
-        if divisible_nodes:
-            nodes = new_nodes[:count]
-            new_nodes = empty(count*2, dtype=KDNode)
     return root
             
