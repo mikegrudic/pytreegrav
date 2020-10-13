@@ -41,7 +41,7 @@ Now let's compare the runtimes of the tree methods and brute force methods for c
     Wall time: 1min 2s
 
 
-pykdgrav also supports OpenMP multithreading, but no support for higher parallelism is not implemented. We can make it even faster by running in parallel (here on a dual-core laptop):
+pykdgrav also supports OpenMP multithreading, but no support for higher parallelism is implemented. We can make it even faster by running in parallel (here on a dual-core laptop):
 
 
 ```python
