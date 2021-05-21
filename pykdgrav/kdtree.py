@@ -1,4 +1,5 @@
-from numba import int32, deferred_type, optional, float64, boolean, int64, njit, jit, jitclass, prange, types
+from numba import int32, deferred_type, optional, float64, boolean, int64, njit, jit, prange, types
+from numba.experimental import jitclass
 import numpy as np
 from numpy import empty, empty_like, zeros, zeros_like, sqrt
 from numba.typed import List
