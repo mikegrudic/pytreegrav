@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='pykdgrav',
-      version='0.14.5',
+      version='0.14.6',
       description='Fast approximate gravitational force and potential calculations',
       url='http://github.com/mikegrudic/pykdgrav',
       author='Mike Grudic',
