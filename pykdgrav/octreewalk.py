@@ -5,7 +5,7 @@ import numpy as np
 
 @njit(fastmath=True)
 def PotentialWalk(pos, tree, no=-1, softening=0,theta=1):
-    """Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree structure
+    """Returns the gravitational potential at pos by performing the Barnes-Hut treewalk using the provided octree structure
 
     Arguments:
     pos - (3,) array containing position of interest
