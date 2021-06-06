@@ -4,7 +4,7 @@ from ..kernel import *
 import numpy as np
 
 @njit(fastmath=True)
-def PotentialWalk(pos, node, phi, theta=0.7):
+def PotentialWalk(pos, node, phi, softening=0, theta=0.7):
     """Returns the gravitational field at position x by performing the Barnes-Hut treewalk using the provided KD-tree node
 
     Arguments:
@@ -17,6 +17,7 @@ def PotentialWalk(pos, node, phi, theta=0.7):
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0, gives ~1\
 % accuracy)
     """
+    ## (ABG) NOTE softening is not actually used here...
     dx = node.COM[0]-pos[0]
     dy = node.COM[1]-pos[1]
     dz = node.COM[2]-pos[2]
@@ -76,17 +77,19 @@ def ForceWalk(pos, node, g, softening=0.0, theta=0.7):
     return g
 
 @njit(parallel=True, fastmath=True)
-def GetPotentialParallel(pos,tree, G, theta):
+def GetPotentialParallel(pos,tree, softening=None, G=1., theta=0.7):
+    if softening is None: softening = zeros(pos.shape[0])
     result = empty(pos.shape[0])
     for i in prange(pos.shape[0]):
-        result[i] = G*PotentialWalk(pos[i], tree, 0., theta=theta)
+        result[i] = G*PotentialWalk(pos[i], tree, 0., softening=softening[i], theta=theta)
     return result
 
 @njit(fastmath=True)
-def GetPotential(pos,tree, G, theta):
+def GetPotential(pos,tree, softening=None, G=1., theta=0.7):
+    if softening is None: softening = zeros(pos.shape[0])
     result = empty(pos.shape[0])
     for i in range(pos.shape[0]):
-        result[i] = G*PotentialWalk(pos[i], tree, 0., theta=theta)
+        result[i] = G*PotentialWalk(pos[i], tree, 0., softening=softening[i], theta=theta)
     return result
 
 @njit(fastmath=True)

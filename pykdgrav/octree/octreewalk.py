@@ -80,21 +80,23 @@ def ForceWalk(pos, tree, no=-1, softening=0,theta=1):
             if c < 0:
                 continue
             else:
-                force += ForceWalk(pos, tree, c, softening=softening,theta=theta) # add up the force contribution you get for each subnode
+                force += ForceWalk(pos, tree, c, softening=softening, theta=theta) # add up the force contribution you get for each subnode
     return force 
 
 @njit(parallel=True, fastmath=True)
-def GetPotentialParallel(pos,tree, G, theta):
+def GetPotentialParallel(pos,tree, softening=None, G=1., theta=0.7):
+    if softening is None: softening = zeros(pos.shape[0])
     result = empty(pos.shape[0])
     for i in prange(pos.shape[0]):
-        result[i] = G*PotentialWalk(pos[i], tree, theta=theta)
+        result[i] = G*PotentialWalk(pos[i], tree, softening=softening[i], theta=theta)
     return result
 
 @njit(fastmath=True)
-def GetPotential(pos,tree, G, theta):
+def GetPotential(pos,tree, softening=None, G=1., theta=0.7):
+    if softening is None: softening = zeros(pos.shape[0])
     result = empty(pos.shape[0])
     for i in range(pos.shape[0]):
-        result[i] = G*PotentialWalk(pos[i], tree, theta=theta)
+        result[i] = G*PotentialWalk(pos[i], tree, softening=softening[i], theta=theta)
     return result
 
 @njit(fastmath=True)
