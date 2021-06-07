@@ -80,7 +80,10 @@ def ForceWalk(pos, tree, no=-1, softening=0,theta=1):
             if c < 0:
                 continue
             else:
-                force += ForceWalk(pos, tree, c, softening=softening, theta=theta) # add up the force contribution you get for each subnode
+                c_force = ForceWalk(pos, tree, c, softening=softening, theta=theta) # add up the force contribution you get for each subnode
+                force[0]+=c_force[0]
+                force[1]+=c_force[1]
+                force[2]+=c_force[2]
     return force 
 
 @njit(parallel=True, fastmath=True)
