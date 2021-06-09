@@ -1,4 +1,4 @@
-from pykdgrav import *
+from pytreegrav import *
 #from pykdgrav.bruteforce import *
 import numpy as np
 from time import time
@@ -15,9 +15,9 @@ force_error = []
 phi_error = []
 x = np.random.rand(10**1,3)
 m = np.random.rand(10**1)
-Accel(x,m,parallel=parallel)
+Accel(x,m,np.zeros_like(m), parallel=parallel,theta=theta)
 BruteForceAccel(x,m)
-Potential(x,m, parallel=parallel)
+Potential(x,m, np.zeros_like(m), parallel=parallel,theta=theta)
 BruteForcePotential(x,m)
 for n in N:
     print(n)
@@ -52,10 +52,10 @@ for n in N:
         force_error.append((aerror/amag).mean()**0.5)
         print(force_error[-1])
     else:
-        t4.append(0)
-        t3.append(0)
-        force_error.append(0)
-        phi_error.append(0)
+        t4.append(np.nan)
+        t3.append(np.nan)
+        force_error.append(np.nan)
+        phi_error.append(np.nan)
 
 
 plt.loglog(N, np.array(t1)/N,label="Potential (Tree)")
@@ -65,11 +65,11 @@ plt.loglog(N, np.array(t4)/N, label="Acceleration (Brute Force)")
 plt.legend(loc=4)
 plt.ylabel("Time per particle (s)")
 plt.xlabel("N")
-plt.savefig("CPU_Time.png")
+plt.savefig("CPU_Time.png",bbox_inches='tight')
 plt.clf()
 plt.loglog(N, phi_error, label="Potential error")
 plt.loglog(N, force_error, label="Acceleration error")
 print(force_error, phi_error)
 plt.legend()
-plt.savefig("Errors.png")
+plt.savefig("Errors.png",bbox_inches='tight')
 

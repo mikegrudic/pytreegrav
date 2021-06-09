@@ -1,6 +1,6 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like
 from numba import njit, prange
-from ..kernel import *
+from .kernel import *
 import numpy as np
 
 @njit(fastmath=True)
@@ -26,7 +26,7 @@ def PotentialWalk(pos,  tree, softening=0, no=-1, theta=0.7):
             dx[k] = tree.Coordinates[no,k] - pos[k]
             r += dx[k]*dx[k]
         r = sqrt(r)
-        h = max(tree.Softenings[no],softening)
+        h = max(tree.Softenings[no],softening)        
         
         if no < tree.NumParticles: # if we're looking at a leaf/particle
             if r>0:  phi += tree.Masses[no] * PotentialKernel(r,h) # by default we neglect the self-potential
@@ -70,13 +70,13 @@ def AccelWalk(pos,  tree, softening=0, no=-1, theta=0.7): #,include_self_potenti
         if no < tree.NumParticles: # if we're looking at a leaf/particle
             if r > 0:  # no self-force
                 if r < h: # within the softening radius
-                    fac = -tree.Masses[no] * ForceKernel(r,h) # fac stores the quantity M(<R)/R^3 to be used later for force computation
+                    fac = tree.Masses[no] * ForceKernel(r,h) # fac stores the quantity M(<R)/R^3 to be used later for force computation
                 else: # use point mass force
-                    fac = -tree.Masses[no]/(r*r2)
+                    fac = tree.Masses[no]/(r*r2)
                 sum_field = True
             no = tree.NextBranch[no]
         elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]): # if we satisfy the criteria for accepting the monopole
-            fac = -tree.Masses[no]/(r*r2)
+            fac = tree.Masses[no]/(r*r2)
             sum_field = True
             no = tree.NextBranch[no] # go to the next branch in the tree
         else: # open the node
@@ -170,43 +170,3 @@ def ForceWalkRecursive(pos, tree, no=-1, softening=0,theta=1):
                 force[1]+=c_force[1]
                 force[2]+=c_force[2]
     return force 
-
-@njit(parallel=True, fastmath=True)
-def GetPotentialParallel(pos,tree, softening, G=1., theta=0.7):
- #   if softening == None: softening = zeros(pos.shape[0], dtype=np.float64)
-    result = empty(pos.shape[0])
-    for i in prange(pos.shape[0]):
-        result[i] = G*PotentialWalk(pos[i], tree, softening=softening[i], theta=theta)
-    return result
-
-@njit(fastmath=True)
-def GetPotential(pos,tree, softening=None, G=1., theta=0.7):
-    if softening is None: softening = zeros(pos.shape[0])
-    result = empty(pos.shape[0])
-    for i in range(pos.shape[0]):
-        result[i] = G*PotentialWalk(pos[i], tree, softening=softening[i], theta=theta)
-    return result
-
-@njit(fastmath=True)
-def GetAccel(pos, tree, softening=None, G=1., theta=0.7):
-    """ Get's the vector gravitational acceleration
-    Arguments:
-    pos -- the target positions to evaluate the force
-    tree -- an octree instance
-    Keyword Arguments:
-    softening=None -- target softening, defaults to 0
-    G=1 -- gravitational constant, pass in your units here
-    theta=0.7 -- opening angle of the tree"""
-    if softening is None: softening = zeros(pos.shape[0])
-    result = empty(pos.shape)
-    for i in range(pos.shape[0]):
-        result[i] = G*ForceWalk(pos[i], tree, softening=softening[i], theta=theta)
-    return result
-
-@njit(parallel=True, fastmath=True)
-def GetAccelParallel(pos, tree, softening, G=1., theta=0.7):
-  #  if softening is None: softening = zeros(len(pos), dtype=np.float64)    
-    result = empty(pos.shape)
-    for i in prange(pos.shape[0]):
-        result[i] = G*ForceWalk(pos[i], tree, softening=softening[i], theta=theta)
-    return result

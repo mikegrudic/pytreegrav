@@ -1,18 +1,15 @@
 
 # Introduction
 
-pykdgrav is a package that implements the Barnes-Hut method for computing the combined gravitational field and/or potential of N particles. We implement a kd-tree as a numba jitclass to achieve much higher peformance than the equivalent pure Python implementation, without writing a single line of C or Cython.
-
-Despite the similar name, this project has no affiliation with the N-body code [pkdgrav](https://bitbucket.org/dpotter/pkdgrav3), however it is where I got the idea to use a kd-tree instead of an octree.
+pytreegrav is a package that implements the Barnes-Hut method for computing the combined gravitational field and/or potential of N particles. We implement an oct-tree as a numba jitclass to achieve much higher peformance than the equivalent pure Python implementation, without writing a single line of C or Cython.
 
 # Walkthrough
 
 First let's import the stuff we want and generate some particle positions and masses
 
-
 ```python
 import numpy as np
-from pykdgrav import Accel, Potential, BruteForcePotential, BruteForceAccel
+from pytreegrav import Accel, Potential, BruteForcePotential, BruteForceAccel
 ```
 
 
@@ -31,30 +28,29 @@ Now let's compare the runtimes of the tree methods and brute force methods for c
 %time a_brute = BruteForceAccel(x,m)
 ```
 
-    CPU times: user 2.26 s, sys: 62 ms, total: 2.32 s
-    Wall time: 2.32 s
-    CPU times: user 3.94 s, sys: 66 ms, total: 4.01 s
-    Wall time: 4.01 s
-    CPU times: user 29.5 s, sys: 203 ms, total: 29.7 s
-    Wall time: 29.6 s
-    CPU times: user 1min 2s, sys: 274 ms, total: 1min 2s
-    Wall time: 1min 2s
+    CPU times: user 608 ms, sys: 8 ms, total: 616 ms
+    Wall time: 614 ms
+    CPU times: user 626 ms, sys: 4.01 ms, total: 630 ms
+    Wall time: 629 ms
+    CPU times: user 15.8 s, sys: 16 ms, total: 15.8 s
+    Wall time: 15.8 s
+    CPU times: user 37.6 s, sys: 8.05 ms, total: 37.6 s
+    Wall time: 37.5 s
 
 
-pykdgrav also supports OpenMP multithreading, but no support for higher parallelism is implemented. We can make it even faster by running in parallel (here on a dual-core laptop):
+
+pytreegrav also supports OpenMP multithreading, but no support for higher parallelism is implemented. We can make it even faster by running in parallel:
 
 
 ```python
 %time a_tree = Accel(x,m,parallel=True)
 ```
 
-    CPU times: user 5.38 s, sys: 83.8 ms, total: 5.46 s
-    Wall time: 2.18 s
+    CPU times: user 1.65 s, sys: 28 ms, total: 1.68 s
+    Wall time: 166 ms
 
 
-Nice, basically perfect scaling. 
-
-The treecode will almost always be faster than brute force for particle counts greater than ~10000. Below is a tougher benchmark for more realistic problem, run on a single core on my laptop. The particles were arranged in a Plummer distribution and an opening angle of 0.7 was used instead of the default 1:
+The treecode will almost always be faster than brute force for particle counts greater than ~10000. Below is a tougher benchmark for more realistic problem, run on a single core. The particles were arranged in a Plummer distribution and an opening angle of 0.7 was used instead of the default 1:
 
 ![Benchmark](./CPU_Time.png)
 
@@ -87,7 +83,7 @@ print("RMS force error: %g"%np.sqrt(np.average(delta_a/amag)))
 Easy peasy lemon squeezy. First build the tree, then feed the target points into GetPotential or GetAccel.
 
 ```python
-from pykdgrav import ConstructKDTree, GetAccel, GetPotential, GetAccelParallel, GetPotentialParallel
+from pytreegrav import ConstructKDTree, GetAccel, GetPotential, GetAccelParallel, GetPotentialParallel
 ```
 
 ```python
@@ -117,4 +113,4 @@ target_potential = GetPotentialParallel(target_points, tree, G=1., theta=0.7)
 * Greater parallelism, e.g. in the tree-build algorithm, support for massive parallelism
 * Support for computing approximate correlation and structure functions.
 
-Stay tuned! If there is any feature that would make pykdgrav useful for your project, just let me know!
+Stay tuned! If there is any feature that would make pytreegrav useful for your project, just let me know!

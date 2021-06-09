@@ -141,3 +141,5 @@ def SetupTreewalk(tree,no,children):
     for c in children[no]:
         if c >= tree.NumParticles: # if we have a node, call routine recursively
             SetupTreewalk(tree,c,children)    
+
+
