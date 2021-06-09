@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 
 parallel = False
 theta = 0.7
+soft = 0.1
 N = 2**np.arange(6,18)
 t1 = []
 t2 = []
@@ -15,10 +16,11 @@ force_error = []
 phi_error = []
 x = np.random.rand(10**1,3)
 m = np.random.rand(10**1)
-Accel(x,m,np.zeros_like(m), parallel=parallel,theta=theta)
-BruteForceAccel(x,m)
-Potential(x,m, np.zeros_like(m), parallel=parallel,theta=theta)
-BruteForcePotential(x,m)
+Accel(x,m,np.repeat(soft,len(m)), parallel=parallel,theta=theta)
+BruteForceAccel(x,m,np.repeat(soft,len(m)))
+Potential(x,m, np.repeat(soft,len(m)),parallel=parallel,theta=theta)
+BruteForcePotential(x,m,np.repeat(soft,len(m)))
+
 for n in N:
     print(n)
     x = np.random.rand(n)
@@ -27,7 +29,7 @@ for n in N:
     x = np.random.normal(size=(n,3))
     x = (x.T * r/np.sum(x**2,axis=1)**0.5).T
     m = np.repeat(1./n,n)
-    h = np.zeros_like(m)
+    h = np.ones_like(m) * soft
     t = time()
     phitree = Potential(x, m, h, parallel=parallel,theta=theta)
     t = time() - t 
@@ -39,12 +41,12 @@ for n in N:
     t2.append(t)
     if n < 64**3:
         t = time()
-        phibrute = BruteForcePotential(x,m)
+        phibrute = BruteForcePotential(x,m,h)
         t = time() - t
         t3.append(t)
         phi_error.append(np.std((phitree-phibrute)/phibrute))
         t = time()
-        abrute = BruteForceAccel(x,m)
+        abrute = BruteForceAccel(x,m,h)
         t = time() - t
         t4.append(t)
         amag = ((np.sum(abrute**2,axis=1) + np.sum(atree**2,axis=1))/2)

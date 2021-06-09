@@ -83,7 +83,7 @@ print("RMS force error: %g"%np.sqrt(np.average(delta_a/amag)))
 Easy peasy lemon squeezy. First build the tree, then feed the target points into GetPotential or GetAccel.
 
 ```python
-from pytreegrav import ConstructKDTree, GetAccel, GetPotential, GetAccelParallel, GetPotentialParallel
+from pytreegrav import ConstructTree, GetAccel, GetPotential, GetAccelParallel, GetPotentialParallel
 ```
 
 ```python
@@ -93,7 +93,7 @@ source_masses = np.repeat(1./len(source_points), len(source_points))
 source_softening = np.repeat(.1, len(source_points))
 
 # construct the tree
-tree = ConstructKDTree(source_points, source_masses, source_softening)
+tree = ConstructTree(source_points, source_masses, source_softening)
 
 # target points where you wanna know the field values
 target_points = np.random.normal(size=(10**3,3))
