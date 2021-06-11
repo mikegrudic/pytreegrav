@@ -17,8 +17,8 @@ def ConstructTree(pos,m,softening=None):
     Octree instance built from particle data
     """
     if softening is None: softening = zeros_like(m)
-    if np.any(np.isnan(pos)) or np.any(np.isnan(m)) or np.any(np.isnan(softening)):
-        print("Nan input detected - aborting treebuild to avoid going into an infinite loop!")
+    if not (np.all(np.isfinite(pos)) and np.all(np.isfinite(m)) and np.all(np.isfinite(softening))):
+        print("Invalid input detected - aborting treebuild to avoid going into an infinite loop!")
         raise
     return Octree(pos,m,softening)
 
