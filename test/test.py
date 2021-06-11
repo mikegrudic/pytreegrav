@@ -3,11 +3,12 @@ from pytreegrav import *
 import numpy as np
 from time import time
 from matplotlib import pyplot as plt
+import palettable
 
-parallel = False
+parallel = True
 theta = 0.7
-soft = 0.1
-N = 2**np.arange(6,18)
+soft = 0.
+N = 2**np.arange(6,27)
 t1 = []
 t2 = []
 t3 = []
@@ -16,11 +17,14 @@ force_error = []
 phi_error = []
 x = np.random.rand(10**1,3)
 m = np.random.rand(10**1)
-Accel(x,m,np.repeat(soft,len(m)), parallel=parallel,theta=theta)
-BruteForceAccel(x,m,np.repeat(soft,len(m)))
-Potential(x,m, np.repeat(soft,len(m)),parallel=parallel,theta=theta)
-BruteForcePotential(x,m,np.repeat(soft,len(m)))
+Accel(x,m,np.repeat(soft,len(m)), parallel=parallel,theta=theta,method='tree')
+Accel(x,m,np.repeat(soft,len(m)), parallel=parallel,theta=theta,method='bruteforce')
+#BruteForceAccel(x,m,np.repeat(soft,len(m)))
+Potential(x,m, np.repeat(soft,len(m)),parallel=parallel,theta=theta,method='tree')
+Potential(x,m, np.repeat(soft,len(m)),parallel=parallel,theta=theta,method='bruteforce')
 
+fig, ax = plt.subplots(figsize=(4,4))
+ax.set_prop_cycle('color', palettable.colorbrewer.qualitative.Dark2_4.mpl_colors)
 for n in N:
     print(n)
     x = np.random.rand(n)
@@ -31,22 +35,22 @@ for n in N:
     m = np.repeat(1./n,n)
     h = np.ones_like(m) * soft
     t = time()
-    phitree = Potential(x, m, h, parallel=parallel,theta=theta)
+    phitree = Potential(x, m, h, parallel=parallel,theta=theta,method='tree')
     t = time() - t 
     t1.append(t)
     t = time()
-    atree = Accel(x, m, h, parallel=parallel,theta=theta)
+    atree = Accel(x, m, h, parallel=parallel,theta=theta,method='tree')
     print(atree)
     t = time() - t
     t2.append(t)
-    if n < 64**3:
+    if n < 10**6:
         t = time()
-        phibrute = BruteForcePotential(x,m,h)
+        phibrute = Potential(x, m, h, parallel=parallel,theta=theta,method='bruteforce')
         t = time() - t
         t3.append(t)
         phi_error.append(np.std((phitree-phibrute)/phibrute))
         t = time()
-        abrute = BruteForceAccel(x,m,h)
+        abrute = Accel(x, m, h, parallel=parallel,theta=theta,method='bruteforce')
         t = time() - t
         t4.append(t)
         amag = ((np.sum(abrute**2,axis=1) + np.sum(atree**2,axis=1))/2)
@@ -60,13 +64,13 @@ for n in N:
         phi_error.append(np.nan)
 
 
-plt.loglog(N, np.array(t1)/N,label="Potential (Tree)")
-plt.loglog(N, np.array(t2)/N,label="Acceleration (Tree)")
-plt.loglog(N, np.array(t3)/N,label="Potential (Brute Force)")
-plt.loglog(N, np.array(t4)/N, label="Acceleration (Brute Force)")
-plt.legend(loc=4)
-plt.ylabel("Time per particle (s)")
-plt.xlabel("N")
+ax.loglog(N, np.array(t1)/N,label="Potential (Tree)")
+ax.loglog(N, np.array(t2)/N,label="Acceleration (Tree)")
+ax.loglog(N, np.array(t3)/N,label="Potential (Brute Force)")
+ax.loglog(N, np.array(t4)/N, label="Acceleration (Brute Force)")
+ax.legend(labelspacing=0.1,frameon=True)
+ax.set_ylabel("Time per particle (s)")
+ax.set_xlabel("Number of particles")
 plt.savefig("CPU_Time.png",bbox_inches='tight')
 plt.clf()
 plt.loglog(N, phi_error, label="Potential error")

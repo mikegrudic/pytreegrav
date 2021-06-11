@@ -29,9 +29,13 @@ def PotentialWalk(pos,  tree, softening=0, no=-1, theta=0.7):
         h = max(tree.Softenings[no],softening)        
         
         if no < tree.NumParticles: # if we're looking at a leaf/particle
-            if r>0:  phi += tree.Masses[no] * PotentialKernel(r,h) # by default we neglect the self-potential
+            if r>0: # by default we neglect the self-potential
+                if r < h:
+                    phi += tree.Masses[no] * PotentialKernel(r,h) 
+                else:
+                    phi -= tree.Masses[no] / r
             no = tree.NextBranch[no]
-        elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]): # if we satisfy the criteria for accepting the monopole
+        elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]*0.6+tree.Deltas[no]): # if we satisfy the criteria for accepting the monopole
             phi -= tree.Masses[no]/r
             no = tree.NextBranch[no]
         else: # open the node
@@ -75,7 +79,7 @@ def AccelWalk(pos,  tree, softening=0, no=-1, theta=0.7): #,include_self_potenti
                     fac = tree.Masses[no]/(r*r2)
                 sum_field = True
             no = tree.NextBranch[no]
-        elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]): # if we satisfy the criteria for accepting the monopole
+        elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]*0.6+tree.Deltas[no]): # if we satisfy the criteria for accepting the monopole            
             fac = tree.Masses[no]/(r*r2)
             sum_field = True
             no = tree.NextBranch[no] # go to the next branch in the tree
@@ -88,85 +92,51 @@ def AccelWalk(pos,  tree, softening=0, no=-1, theta=0.7): #,include_self_potenti
             
     return g
 
-@njit(fastmath=True)
-def PotentialWalkRecursive(pos, tree, no=-1, softening=0,theta=1):
-    """Returns the gravitational potential at pos by performing the Barnes-Hut treewalk using the provided octree structure
+def PotentialTarget_tree(pos_target, softening_target, tree, G=1., theta=0.7):
+    """Returns the gravitational potential at the specified points, given a tree containing the mass distribution
 
     Arguments:
-    pos - (3,) array containing position of interest
-    tree - octree object storing the tree structure    
+    pos_target -- shape (N,3) array of positions at which to evaluate the potential
+    softening_target -- shape (N,) array of *minimum* softening lengths to be used in all potential computations
+    tree -- Octree instance containing the positions, masses, and softenings of the source particles
 
-    Keyword arguments:
-    no - index of the tree node to do the walk for - defaults to starting with the top-level node
-    softening - softening radius of the particle at which the force is being evaluated - needed if you want the short-range force to be momentum-conserving
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0, gives ~1% accuracy)
+    Optional arguments:
+    G -- gravitational constant (default 1.0)
+    theta -- accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+
+    Returns:
+    shape (N,) array of potential values at each point in pos
     """
-    if no < 0: no = tree.NumParticles # default to the top-level node
-    phi = 0.
-    dx = tree.Coordinates[no,0]-pos[0]
-    dy = tree.Coordinates[no,1]-pos[1]
-    dz = tree.Coordinates[no,2]-pos[2]
-    r = sqrt(dx*dx + dy*dy + dz*dz)
-    h = max(tree.Softenings[no],softening)
+    result = empty(pos_target.shape[0])
+    for i in prange(pos_target.shape[0]):
+        result[i] = G*PotentialWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
+    return result
 
-    if no < tree.NumParticles:
-        if r==0: return 0. # by default we neglect the self-potential.
-        return tree.Masses[no] * PotentialKernel(r,softening)
-    elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]):
-        return -tree.Masses[no]/r # we can sum the monopole
-    else: # we have to open the node
-        for c in tree.children[no]: # loop over subnodes
-            if c < 0:
-                continue
-            else:
-                phi += PotentialWalk(pos, tree, c, softening,theta=theta) # add up the potential contribution you get for each subnode
-    return phi
+# JIT this function and its parallel version
+PotentialTarget_tree_parallel = njit(PotentialTarget_tree,fastmath=True,parallel=True)
+PotentialTarget_tree = njit(PotentialTarget_tree,fastmath=True)
 
-@njit(fastmath=True)
-def ForceWalkRecursive(pos, tree, no=-1, softening=0,theta=1):
-    """Returns the gravitational force at pos by performing the Barnes-Hut treewalk using the provided octree structure
+def AccelTarget_tree(pos_target, softening_target, tree, G=1., theta=0.7):
+    """Returns the gravitational acceleration at the specified points, given a tree containing the mass distribution
 
     Arguments:
-    pos - (3,) array containing position of interest
-    tree - octree object storing the tree structure    
+    pos_target -- shape (N,3) array of positions at which to evaluate the field
+    softening_target -- shape (N,) array of *minimum* softening lengths to be used in all accel computations
+    tree -- Octree instance containing the positions, masses, and softenings of the source particles
 
-    Keyword arguments:
-    no - index of the tree node to do the walk for - defaults to starting with the top-level node
-    softening - softening radius of the particle at which the force is being evaluated - needed if you want the short-range force to be momentum-conserving
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0, gives ~1\
-% accuracy)
+    Optional arguments:
+    G -- gravitational constant (default 1.0)
+    theta -- accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+
+    Returns:
+    shape (N,3) array of acceleration values at each point in pos_target
     """
-    if no < 0: no = tree.NumParticles # default to the top-level node
+    if softening_target is None: softening_target = zeros(pos_target.shape[0])
+    result = empty(pos_target.shape)
+    for i in prange(pos_target.shape[0]):
+        result[i] = G*AccelWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
+    return result
 
-    force = np.zeros(3)
-
-    dx = tree.Coordinates[no,0]-pos[0]
-    dy = tree.Coordinates[no,1]-pos[1]
-    dz = tree.Coordinates[no,2]-pos[2]
-
-    r2 = dx*dx + dy*dy + dz*dz
-    r = sqrt(r2)
-
-    if no < tree.NumParticles:
-        if r==0.: return force # by default we neglect the self-acceleration
-        fac = -tree.Masses[no] * ForceKernel(r,softening)
-        force[0] = dx*fac
-        force[1] = dy*fac
-        force[2] = dz*fac
-        return force
-    elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], max(tree.Softenings[no],softening)+tree.Sizes[no]):
-        fac = -tree.Masses[no]/(r2*r) ## -M /|r|^2 * r/|r| (vector eqn)
-        force[0] = dx*fac
-        force[1] = dy*fac
-        force[2] = dz*fac
-        return force
-    else: # we have to open the node
-        for c in tree.children[no]: # loop over subnodes
-            if c < 0:
-                continue
-            else:
-                c_force = ForceWalk(pos, tree, c, softening=softening, theta=theta) # add up the force contribution you get for each subnode
-                force[0]+=c_force[0]
-                force[1]+=c_force[1]
-                force[2]+=c_force[2]
-    return force 
+# JIT this function and its parallel version
+AccelTarget_tree_parallel = njit(AccelTarget_tree,fastmath=True,parallel=True)
+AccelTarget_tree = njit(AccelTarget_tree,fastmath=True)
