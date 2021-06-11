@@ -47,6 +47,6 @@ The field summation itself uses the @barneshut geometric opening criterion, with
 
 # Acknowledgements
 
-We acknowledge helpful feedback from Elisa Bortolas, Thorsten García, and GitHub user ``herkesg`` during the development of ``pykdgrav``, which was incorporated into ``pytreegrav``.
+We acknowledge code contributions from Martin Beroiz and helpful feedback from Elisa Bortolas, Thorsten García, and GitHub user ``herkesg`` during the development of ``pykdgrav``, which were incorporated into ``pytreegrav``.
 
 # References
