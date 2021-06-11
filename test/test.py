@@ -5,10 +5,10 @@ from time import time
 from matplotlib import pyplot as plt
 import palettable
 
-parallel = True
+parallel = False
 theta = 0.7
 soft = 0.
-N = 2**np.arange(6,27)
+N = 2**np.arange(6,24)
 t1 = []
 t2 = []
 t3 = []
@@ -43,7 +43,7 @@ for n in N:
     print(atree)
     t = time() - t
     t2.append(t)
-    if n < 10**6:
+    if n < 64**3:
         t = time()
         phibrute = Potential(x, m, h, parallel=parallel,theta=theta,method='bruteforce')
         t = time() - t
