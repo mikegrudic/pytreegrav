@@ -32,7 +32,6 @@ class Octree(object):
         self.Softenings = zeros(self.NumNodes)
         self.Coordinates = zeros((self.NumNodes,3))
         self.Deltas = zeros(self.NumNodes)
-# below will be used for future GADGET-like treewalk, which obviates the need to store all 8 children and allows a non-recursive treewalk
         self.NextBranch = -ones(self.NumNodes, dtype=np.int64) # 
         self.FirstSubnode = -ones(self.NumNodes, dtype=np.int64)
         self.ParentNode = -ones(self.NumNodes, dtype=np.int64)
@@ -73,6 +72,17 @@ class Octree(object):
                 child_candidate = children[no,octant]
                 if child_candidate > -1: # it exists, now check if it's a node or a particle
                     if child_candidate < self.NumParticles: # it's a particle - we have to create a new node of index new_node_idx containing the 2 points we've got, and point the pre-existing particle to the new particle
+                        # EXCEPTION: if the pre-existing particle is at the same coordinate, we will perturb the position of the new particle slightly and start over
+                        same_coord = True
+                        for k in range(3):
+                            if self.Coordinates[i,k] != self.Coordinates[child_candidate,k]: same_coord = False
+                        if same_coord:
+                            self.Coordinates[i] *= np.exp(3e-16*(np.random.rand(3)-0.5)) # random perturbation
+                            points[i] = self.Coordinates[i]
+                            no = self.NumParticles # restart the tree traversal
+                            continue
+                        # end exception
+                        
                         children[no,octant] = new_node_idx;                        
                         self.Coordinates[new_node_idx] = self.Coordinates[no] + self.Sizes[no] * octant_offsets[octant] # set the center of the new node
                         self.Sizes[new_node_idx] = self.Sizes[no] / 2 # set the size of the new node
