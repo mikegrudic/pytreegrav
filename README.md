@@ -63,7 +63,7 @@ print("Brute force potential runtime: %gs"%(time() - t)); t = time()
     Brute force potential runtime: 20.0234s
 
 
-As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding $10^4$. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel i9 9900k workstation:
+As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding 10^4. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel i9 9900k workstation:
 ![Benchmark](./CPU_Time_serial.png)
 
 
@@ -81,7 +81,7 @@ print("RMS potential error: ", phi_error)
     RMS potential error:  0.0003888328578588027
 
 
-The above errors are typical for default settings: $\sim 1\%$ force error and $\sim 0.1\%$ potential error. The error in the tree approximation is controlled by the Barnes-Hut opening angle $\Theta$, set to 0.7 by default. Smaller $\Theta$ gives higher accuracy, but also runs slower:
+The above errors are typical for default settings: ~1% force error and ~0.1\% potential error. The error in the tree approximation is controlled by the Barnes-Hut opening angle ``theta``, set to 0.7 by default. Smaller ``theta`` gives higher accuracy, but also runs slower:
 
 
 ```python
