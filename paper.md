@@ -10,6 +10,7 @@ authors:
     orcid: 0000-0002-1655-5604
     affiliation: 1
   - name: Alexander B. Gurvich
+    orcid: 0000-0002-6145-3674
     affiliation: 1
 affiliations:
  - name: Department of Physics & Astronomy and CIERA, Northwestern University, 1800 Sherman Ave, Evanston, IL 60201, USA
@@ -46,4 +47,4 @@ The field summation itself uses the @barneshut geometric opening criterion, with
 
 # Acknowledgements
 
-We acknowledge helpful feedback from Elisa Bortolas, Thorsten García, and GitHub user @maurock during the development of ``pykdgrav``, which was incorporated into ``pytreegrav``.
+We acknowledge helpful feedback from Elisa Bortolas, Thorsten García, and GitHub user ``herkesg`` during the development of ``pykdgrav``, which was incorporated into ``pytreegrav``.
