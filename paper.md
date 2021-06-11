@@ -33,7 +33,7 @@ Many gravity simulation codes (or multi-physics simulation codes _including_ gra
 
 # Methods
 
-``pytreegrav`` can compute $\Phi$ and $\mathbf{g}$ using one of two methods: by "brute force" (explcitly summing the field of every particle, which is exact to machine precision), or using the fast, approximate @barneshut tree-based method (which is approximate, but much faster for large particle numbers). In an $N$-body problem where the fields at all particle positions must be known, the cost of the brute-force method scales $\propto N^2$, while the cost of the tree-based method scales less steeply, $\propto N \log N$ \autoref{fig:cputime}.
+``pytreegrav`` can compute $\Phi$ and $\mathbf{g}$ using one of two methods: by "brute force" (explcitly summing the field of every particle, which is exact to machine precision), or using the fast, approximate @barneshut tree-based method (which is approximate, but much faster for large particle numbers). In an $N$-body problem where the fields at all particle positions must be known, the cost of the brute-force method scales $\propto N^2$, while the cost of the tree-based method scales less steeply, $\propto N \log N$ (\autoref{fig:cputime}).
 
 ![Wall-clock time per particle running ``pytreegrav`` on a sample of $N$ particles from a @plummer distribution for various $N$. Test was run on a an Intel i9 9900K workstation on a single core (_left_) and in parallel on 16 logical cores (_right_).\label{fig:cputime}](CPU_Time_both.png){ width=100% }
 
