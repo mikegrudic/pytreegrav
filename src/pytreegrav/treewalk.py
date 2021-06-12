@@ -107,7 +107,7 @@ def PotentialTarget_tree(pos_target, softening_target, tree, G=1., theta=0.7):
     Returns:
     shape (N,) array of potential values at each point in pos
     """
-    result = empty(pos_target.shape[0])
+    result = empty(pos_target.shape[0])    
     for i in prange(pos_target.shape[0]):
         result[i] = G*PotentialWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
     return result

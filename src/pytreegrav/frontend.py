@@ -56,11 +56,21 @@ def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=Fal
         if return_tree:
             tree = None
     else: # we're using the tree algorithm
-        if tree is None: tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening)) # build the tree if needed
+        if tree is None:
+            tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening)) # build the tree if needed            
+        idx = tree.TreewalkIndices
+
+        # sort by the order they appear in the treewalk to improve access pattern efficiency
+        pos_sorted = np.take(pos,idx,axis=0)
+        h_sorted = np.take(softening,idx)
+        
         if parallel:
-            phi = PotentialTarget_tree_parallel(pos,softening,tree,theta=theta,G=G)
+            phi = PotentialTarget_tree_parallel(pos_sorted,h_sorted,tree,theta=theta,G=G)
         else:
-            phi = PotentialTarget_tree(pos,softening,tree,theta=theta,G=G)
+            phi = PotentialTarget_tree(pos_sorted,h_sorted,tree,theta=theta,G=G)
+
+        # now reorder phi back to the order of the input positions
+        phi = np.take(phi,idx.argsort())
 
     if return_tree:
         return phi, tree
@@ -105,7 +115,9 @@ def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=No
         if return_tree:
             tree = None
     else: # we're using the tree algorithm
-        if tree is None: tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source)) # build the tree if needed
+        if tree is None:
+            tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source)) # build the tree if needed            
+        
         if parallel:
             phi = PotentialTarget_tree_parallel(pos_target,h_target,tree,theta=theta,G=G)
         else:
@@ -148,11 +160,24 @@ def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,p
         if return_tree:
             tree = None
     else: # we're using the tree algorithm
-        if tree is None: tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening)) # build the tree if needed
+        if tree is None:
+            tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening)) # build the tree if needed
+#            idx = tree.TreewalkIndices
+#            tree = ConstructTree(np.take(np.float64(pos),idx,axis=0),np.take(np.float64(m),idx), np.take(np.float64(softening),idx)) # rebuild in order
+ #       else:
+        idx = tree.TreewalkIndices            
+
+        # sort by the order they appear in the treewalk to improve access pattern efficiency
+        pos_sorted = np.take(pos,idx,axis=0)
+        h_sorted = np.take(softening,idx)
+        
         if parallel:
-            g = AccelTarget_tree_parallel(pos,softening,tree,theta=theta,G=G)
+            g = AccelTarget_tree_parallel(pos_sorted,h_sorted,tree,theta=theta,G=G)
         else:
-            g = AccelTarget_tree(pos,softening,tree,theta=theta,G=G)
+            g = AccelTarget_tree(pos_sorted,h_sorted,tree,theta=theta,G=G)
+
+        # now g is in the tree-order: reorder it back to the original order
+        g = np.take(g,idx.argsort(),axis=0)
 
     if return_tree:
         return g, tree

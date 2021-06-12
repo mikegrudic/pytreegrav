@@ -5,10 +5,10 @@ from time import time
 from matplotlib import pyplot as plt
 import palettable
 
-parallel = False
+parallel = True
 theta = 0.7
 soft = 0.
-N = 2**np.arange(6,24)
+N = 2**np.arange(6,28)
 t1 = []
 t2 = []
 t3 = []

@@ -13,16 +13,38 @@ spec = [
     ('Softenings', float64[:]), # individual softenings for particles, _maximum_ softening of inhabitant particles for nodes
     ('NextBranch',int64[:]), 
     ('FirstSubnode',int64[:]),
-    ('ParentNode',int64[:]),
+    ('TreewalkIndices',int64[:]),
    # ('children',int64[:,:]) # indices of child nodes
 ]
 
+
+octant_offsets = 0.25 * np.array([[-1,-1,-1],
+                                  [1,-1,-1],
+                                  [-1,1,-1],
+                                  [1,1,-1],
+                                  [-1,-1,1],
+                                  [1,-1,1],
+                                  [-1,1,1],
+                                  [1,1,1]])
 
 @jitclass(spec)
 class Octree(object):
     """Octree implementation."""
 
-    def __init__(self, points, masses, softening):
+    def __init__(self, points, masses, softening, morton_order=True):
+        self.TreewalkIndices = -ones(points.shape[0],dtype=np.int64)        
+        children = self.BuildTree(points, masses, softening) # first provisional treebuild to get the ordering right
+        SetupTreewalk(self,self.NumParticles,children) # set up the order of the treewalk
+        ComputeMoments(self,self.NumParticles,children) # compute centers of mass, etc.         
+        self.GetWalkIndices() # get the Morton ordering of the points
+ 
+        if morton_order: # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
+            children = self.BuildTree(points[self.TreewalkIndices], np.take(masses,self.TreewalkIndices), np.take(softening,self.TreewalkIndices)) # now re-build the tree with everything in order
+            SetupTreewalk(self,self.NumParticles,children) # re-do the treewalk order with the new indices
+
+        ComputeMoments(self,self.NumParticles,children) # compute centers of mass, etc.
+            
+    def BuildTree(self,points,masses,softening):
         # initialize all attributes
         self.NumParticles = points.shape[0]
         self.NumNodes = 2*self.NumParticles # this is the number of elements in the tree, whether nodes or particles. can make this smaller but this has a safety factor
@@ -32,32 +54,21 @@ class Octree(object):
         self.Softenings = zeros(self.NumNodes)
         self.Coordinates = zeros((self.NumNodes,3))
         self.Deltas = zeros(self.NumNodes)
-        self.NextBranch = -ones(self.NumNodes, dtype=np.int64) # 
+        self.NextBranch = -ones(self.NumNodes, dtype=np.int64) 
         self.FirstSubnode = -ones(self.NumNodes, dtype=np.int64)
-        self.ParentNode = -ones(self.NumNodes, dtype=np.int64)
-
-        children = -ones((self.NumNodes,8),dtype=np.int64)
-
-        octant_offsets = 0.25 * np.array([[-1,-1,-1],
-                                          [1,-1,-1],
-                                          [-1,1,-1],
-                                          [1,1,-1],
-                                          [-1,-1,1],
-                                          [1,-1,1],
-                                          [-1,1,1],
-                                          [1,1,1]])
-
-        # set values for particles
-        self.Coordinates[:self.NumParticles] = points
-        self.Masses[:self.NumParticles] = masses
-        self.Softenings[:self.NumParticles] = softening
+#        self.ParentNode = -ones(self.NumNodes, dtype=np.int64)
 
         # set the properties of the root node
         self.Sizes[self.NumParticles] = max(points[:,0].max()-points[:,0].min(), points[:,1].max()-points[:,1].min(), points[:,2].max()-points[:,2].min())
         for dim in range(3): self.Coordinates[self.NumParticles,dim] = 0.5*(points[:,dim].max() + points[:,dim].min())
-
-        new_node_idx = self.NumParticles + 1
         
+        # set values for particles
+        self.Coordinates[:self.NumParticles] = points
+        self.Masses[:self.NumParticles] = masses
+        self.Softenings[:self.NumParticles] = softening
+        children = -ones((self.NumNodes,8),dtype=np.int64)
+        new_node_idx = self.NumParticles + 1
+            
         # now we insert particles into the tree one at a time, setting up child pointers and initializing node properties as we go
         for i in range(self.NumParticles):
             pos = points[i]
@@ -98,13 +109,24 @@ class Octree(object):
                         continue 
                 else: # if the child does not exist, we let this point be that child (inserting it in the tree) and we're done with this point
                     children[no,octant] = i
-                    no = -1
-                    
-        ComputeMoments(self,self.NumParticles,children)
-        SetupTreewalk(self,self.NumParticles,children)
-#        print(self.NextNode)
+                    no = -1        
+        return children
+
+    def ReorderTree(self):
+        no = self.NumParticles
         
-        
+    def GetWalkIndices(self): # gets the ordering of the particles in the treewalk
+        index = 0
+        node_index = 0
+        no = self.NumParticles
+        while no > -1:
+            if no < self.NumParticles:
+                self.TreewalkIndices[index] = no
+                index += 1
+                no = self.NextBranch[no]
+            else:
+                no = self.FirstSubnode[no]
+
 @njit
 def ComputeMoments(tree, no, children): # does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM
     if no < tree.NumParticles: # if this is a particle, just return the properties
@@ -138,7 +160,7 @@ def SetupTreewalk(tree,no,children):
     last_child = -1
     for c in children[no]:
         if c < 0: continue        
-        tree.ParentNode[c] = no
+#        tree.ParentNode[c] = no
         if tree.FirstSubnode[no] < 0: tree.FirstSubnode[no] = c  # if we haven't yet set current node's next node, do so
 
         if last_node > -1:
@@ -150,6 +172,5 @@ def SetupTreewalk(tree,no,children):
 
     for c in children[no]:
         if c >= tree.NumParticles: # if we have a node, call routine recursively
-            SetupTreewalk(tree,c,children)    
-
+            SetupTreewalk(tree,c,children)
 
