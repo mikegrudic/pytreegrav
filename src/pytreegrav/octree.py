@@ -9,6 +9,7 @@ spec = [
     ('Coordinates', float64[:,:]), # location of center of mass of node (actually stores _geometric_ center before we do the moments pass)
     ('Masses', float64[:]), # total mass of node
     ('Quadrupoles', float64[:,:,:]), # Quadrupole moment of the node
+    ('HasQuads', boolean), # Allow us to quickly check if Quadrupole moments exist to keep monopole calculations fast
     ('NumParticles', int64), # number of particles in the tree
     ('NumNodes',int64), # number of particles + nodes (i.e. mass elements) in the tree
     ('Softenings', float64[:]), # individual softenings for particles, _maximum_ softening of inhabitant particles for nodes
@@ -34,16 +35,17 @@ class Octree(object):
 
     def __init__(self, points, masses, softening, morton_order=True, quadrupole=False):
         self.TreewalkIndices = -ones(points.shape[0],dtype=np.int64)        
+        self.HasQuads = quadrupole
         children = self.BuildTree(points, masses, softening) # first provisional treebuild to get the ordering right
         SetupTreewalk(self,self.NumParticles,children) # set up the order of the treewalk
-        ComputeMoments(self,self.NumParticles,children,quadrupole) # compute centers of mass, etc.         
+        ComputeMoments(self,self.NumParticles,children) # compute centers of mass, etc.         
         self.GetWalkIndices() # get the Morton ordering of the points
  
         if morton_order: # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
             children = self.BuildTree(points[self.TreewalkIndices], np.take(masses,self.TreewalkIndices), np.take(softening,self.TreewalkIndices)) # now re-build the tree with everything in order
             SetupTreewalk(self,self.NumParticles,children) # re-do the treewalk order with the new indices
 
-        ComputeMoments(self,self.NumParticles,children,quadrupole) # compute centers of mass, etc.
+        ComputeMoments(self,self.NumParticles,children) # compute centers of mass, etc.
             
     def BuildTree(self,points,masses,softening):
         # initialize all attributes
@@ -130,7 +132,7 @@ class Octree(object):
                 no = self.FirstSubnode[no]
 
 @njit
-def ComputeMoments(tree, no, children, quadrupole): # does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM
+def ComputeMoments(tree, no, children): # does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM
     if no < tree.NumParticles: # if this is a particle, just return the properties
         return tree.Softenings[no], tree.Masses[no], tree.Quadrupoles[no], tree.Coordinates[no]
     else:
@@ -139,19 +141,19 @@ def ComputeMoments(tree, no, children, quadrupole): # does a recursive pass thro
         hmax = 0
         for c in children[no]:
             if c > -1:
-                hi, mi, quadi, comi = ComputeMoments(tree,c,children,quadrupole)
+                hi, mi, quadi, comi = ComputeMoments(tree,c,children)
                 m += mi
                 com += mi*comi
                 hmax = max(hi, hmax)
         tree.Masses[no] = m
         com = com/m
         quad = zeros((3,3))
-        if quadrupole:
+        if tree.HasQuads:
             for c in children[no]:
                 if c > -1:
-                    hi, mi, quadi, comi = ComputeMoments(tree,c,children,quadrupole)
+                    hi, mi, quadi, comi = ComputeMoments(tree,c,children)
                     ri = comi-com
-                    quad += quadi + mi * (3*np.outer(ri,ri) - np.linalg.norm(ri)*np.ones((3,3))) # Calculate the quadrupole moment based on the moments of the subcells
+                    quad += quadi + mi * (3*np.outer(ri,ri) - np.dot(ri,ri)*np.identity(3)) # Calculate the quadrupole moment based on the moments of the subcells
         tree.Quadrupoles[no] = quad
         delta = 0
         for dim in range(3):
