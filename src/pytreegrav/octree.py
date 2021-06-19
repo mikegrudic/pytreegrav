@@ -54,7 +54,8 @@ class Octree(object):
         self.Sizes = zeros(self.NumNodes)
         self.Deltas = zeros(self.NumNodes)
         self.Masses = zeros(self.NumNodes)
-        self.Quadrupoles = zeros((self.NumNodes,3,3)) # No need to initialize this beyond zero, all n>0 moments are 0 for a single particle
+        if self.HasQuads:
+            self.Quadrupoles = zeros((self.NumNodes,3,3)) # No need to initialize this beyond zero, all n>0 moments are 0 for a single particle
         self.Softenings = zeros(self.NumNodes)
         self.Coordinates = zeros((self.NumNodes,3))
         self.Deltas = zeros(self.NumNodes)
@@ -133,8 +134,9 @@ class Octree(object):
 
 @njit
 def ComputeMoments(tree, no, children): # does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM
+    quad = zeros((3,3))
     if no < tree.NumParticles: # if this is a particle, just return the properties
-        return tree.Softenings[no], tree.Masses[no], tree.Quadrupoles[no], tree.Coordinates[no]
+        return tree.Softenings[no], tree.Masses[no], quad, tree.Coordinates[no]
     else:
         m = 0
         com = zeros(3)
@@ -147,14 +149,13 @@ def ComputeMoments(tree, no, children): # does a recursive pass through the tree
                 hmax = max(hi, hmax)
         tree.Masses[no] = m
         com = com/m
-        quad = zeros((3,3))
         if tree.HasQuads:
             for c in children[no]:
                 if c > -1:
                     hi, mi, quadi, comi = ComputeMoments(tree,c,children)
                     ri = comi-com
                     quad += quadi + mi * (3*np.outer(ri,ri) - np.dot(ri,ri)*np.identity(3)) # Calculate the quadrupole moment based on the moments of the subcells
-        tree.Quadrupoles[no] = quad
+            tree.Quadrupoles[no] = quad
         delta = 0
         for dim in range(3):
             dx = com[dim] - tree.Coordinates[no,dim]
