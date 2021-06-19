@@ -37,6 +37,8 @@ def PotentialWalk(pos,  tree, softening=0, no=-1, theta=0.7):
             no = tree.NextBranch[no]
         elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]*0.6+tree.Deltas[no]): # if we satisfy the criteria for accepting the monopole
             phi -= tree.Masses[no]/r
+            if tree.HasQuads:
+                phi -= 0.5 * np.dot(np.dot(dx,tree.Quadrupoles[no]),dx)/(r*r*r*r*r) # Potential from the quadrupole moment
             no = tree.NextBranch[no]
         else: # open the node
             no = tree.FirstSubnode[no]
@@ -81,6 +83,8 @@ def AccelWalk(pos,  tree, softening=0, no=-1, theta=0.7): #,include_self_potenti
             no = tree.NextBranch[no]
         elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]*0.6+tree.Deltas[no]): # if we satisfy the criteria for accepting the monopole            
             fac = tree.Masses[no]/(r*r2)
+            if tree.HasQuads:
+                g -= np.dot(tree.Quadrupoles[no], dx/r)/(r*r*r*r) - 2.5*np.dot(dx/r, np.dot(tree.Quadrupoles[no], dx/r))*dx/(r*r*r*r*r)
             sum_field = True
             no = tree.NextBranch[no] # go to the next branch in the tree
         else: # open the node
