@@ -8,6 +8,8 @@ spec = [
     ('Deltas', float64[:]), # distance between COM and geometric center of node
     ('Coordinates', float64[:,:]), # location of center of mass of node (actually stores _geometric_ center before we do the moments pass)
     ('Masses', float64[:]), # total mass of node
+    ('Quadrupoles', float64[:,:,:]), # Quadrupole moment of the node
+    ('HasQuads', boolean), # Allow us to quickly check if Quadrupole moments exist to keep monopole calculations fast
     ('NumParticles', int64), # number of particles in the tree
     ('NumNodes',int64), # number of particles + nodes (i.e. mass elements) in the tree
     ('Softenings', float64[:]), # individual softenings for particles, _maximum_ softening of inhabitant particles for nodes
@@ -31,8 +33,9 @@ octant_offsets = 0.25 * np.array([[-1,-1,-1],
 class Octree(object):
     """Octree implementation."""
 
-    def __init__(self, points, masses, softening, morton_order=True):
+    def __init__(self, points, masses, softening, morton_order=True, quadrupole=False):
         self.TreewalkIndices = -ones(points.shape[0],dtype=np.int64)        
+        self.HasQuads = quadrupole
         children = self.BuildTree(points, masses, softening) # first provisional treebuild to get the ordering right
         SetupTreewalk(self,self.NumParticles,children) # set up the order of the treewalk
         ComputeMoments(self,self.NumParticles,children) # compute centers of mass, etc.         
@@ -51,6 +54,8 @@ class Octree(object):
         self.Sizes = zeros(self.NumNodes)
         self.Deltas = zeros(self.NumNodes)
         self.Masses = zeros(self.NumNodes)
+        if self.HasQuads:
+            self.Quadrupoles = zeros((self.NumNodes,3,3)) # No need to initialize this beyond zero, all n>0 moments are 0 for a single particle
         self.Softenings = zeros(self.NumNodes)
         self.Coordinates = zeros((self.NumNodes,3))
         self.Deltas = zeros(self.NumNodes)
@@ -129,20 +134,28 @@ class Octree(object):
 
 @njit
 def ComputeMoments(tree, no, children): # does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM
+    quad = zeros((3,3))
     if no < tree.NumParticles: # if this is a particle, just return the properties
-        return tree.Softenings[no], tree.Masses[no], tree.Coordinates[no] 
+        return tree.Softenings[no], tree.Masses[no], quad, tree.Coordinates[no]
     else:
         m = 0
         com = zeros(3)
         hmax = 0
         for c in children[no]:
             if c > -1:
-                hi, mi, comi = ComputeMoments(tree,c,children)
+                hi, mi, quadi, comi = ComputeMoments(tree,c,children)
                 m += mi
                 com += mi*comi
                 hmax = max(hi, hmax)
         tree.Masses[no] = m
         com = com/m
+        if tree.HasQuads:
+            for c in children[no]:
+                if c > -1:
+                    hi, mi, quadi, comi = ComputeMoments(tree,c,children)
+                    ri = comi-com
+                    quad += quadi + mi * (3*np.outer(ri,ri) - np.dot(ri,ri)*np.identity(3)) # Calculate the quadrupole moment based on the moments of the subcells
+            tree.Quadrupoles[no] = quad
         delta = 0
         for dim in range(3):
             dx = com[dim] - tree.Coordinates[no,dim]
@@ -150,7 +163,7 @@ def ComputeMoments(tree, no, children): # does a recursive pass through the tree
         tree.Deltas[no] = np.sqrt(delta)
         tree.Coordinates[no] = com
         tree.Softenings[no] = hmax
-        return hmax, m, com
+        return hmax, m, quad, com
 
 @njit            
 def SetupTreewalk(tree,no,children):
