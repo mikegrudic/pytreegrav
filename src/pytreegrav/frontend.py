@@ -11,11 +11,11 @@ def valueTestMethod(method):
 
     ## check if method is a str
     if type(method) != str:
-        raise TypeError("Invalid method type, must be str")
+        raise TypeError("Invalid method type %s, must be str"%type(method))
 
     ## check if method is a valid method
     if method not in methods:
-        raise ValueError(f"Invalid method {method:s}. Must be one of: {methods:s}")
+        raise ValueError("Invalid method %s. Must be one of: %s"%(method,str(methods)))
 
 def ConstructTree(pos,m,softening=None):
     """Builds the tree containing particle data, for subsequent potential/field evaluation
