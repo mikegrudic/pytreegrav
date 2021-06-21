@@ -6,6 +6,17 @@ from .octree import *
 from .treewalk import *
 from .bruteforce import *
 
+def valueTestMethod(method):
+    methods = ["adaptive","bruteforce","tree"]
+
+    ## check if method is a str
+    if type(method) != str:
+        raise TypeError("Invalid method type, must be str")
+
+    ## check if method is a valid method
+    if method not in methods:
+        raise ValueError(f"Invalid method {method:s}. Must be one of: {methods:s}")
+
 def ConstructTree(pos,m,softening=None):
     """Builds the tree containing particle data, for subsequent potential/field evaluation
     Arguments:
@@ -41,6 +52,9 @@ def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=Fal
     Returns:
     phi -- shape (N,) array of potentials at the particle positions
     """
+    ## test if method is correct, otherwise raise a ValueError
+    valueTestMethod(method)
+
     if softening is None: softening = np.zeros_like(m)
 
     # figure out which method to use
@@ -99,6 +113,10 @@ def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=No
     Returns:
     phi -- shape (N,) array of potentials at the target positions
     """
+
+    ## test if method is correct, otherwise raise a ValueError
+    valueTestMethod(method)
+
     if h_target is None: h_target = np.zeros(len(pos_target))
     if h_source is None: h_source = np.zeros(len(pos_source))
 
@@ -145,6 +163,10 @@ def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,p
     return_tree -- return the tree used for future use (default False)
     method -- 'adaptive', 'tree', or 'bruteforce' (default adaptive tries to pick the faster choice)
     """
+
+    ## test if method is correct, otherwise raise a ValueError
+    valueTestMethod(method)
+
     if softening is None: softening = np.zeros_like(m)
 
     # figure out which method to use
@@ -207,6 +229,10 @@ def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, 
     Returns:
     g -- shape (N,3) array of gravitational fields at the target positions
     """
+
+    ## test if method is correct, otherwise raise a ValueError
+    valueTestMethod(method)
+
     if h_target is None: h_target = np.zeros(len(pos_target))
     if h_source is None: h_source = np.zeros(len(pos_source))
 
