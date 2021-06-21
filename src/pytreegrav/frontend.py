@@ -6,7 +6,7 @@ from .octree import *
 from .treewalk import *
 from .bruteforce import *
 
-def ConstructTree(pos,m,softening=None):
+def ConstructTree(pos,m,softening=None,quadrupole=False):
     """Builds the tree containing particle data, for subsequent potential/field evaluation
     Arguments:
     pos -- shape (N,3) array of particle positions
@@ -20,9 +20,9 @@ def ConstructTree(pos,m,softening=None):
     if not (np.all(np.isfinite(pos)) and np.all(np.isfinite(m)) and np.all(np.isfinite(softening))):
         print("Invalid input detected - aborting treebuild to avoid going into an infinite loop!")
         raise
-    return Octree(pos,m,softening)
+    return Octree(pos,m,softening,quadrupole=quadrupole)
 
-def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,parallel=False,method='adaptive'):
+def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,parallel=False,method='adaptive',quadrupole=False):
     """Returns the gravitational potential for a set of particles with positions x and masses m, at the positions of those particles, using either brute force or tree-based methods depending on the number of particles.
 
     Arguments:
@@ -57,7 +57,7 @@ def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=Fal
             tree = None
     else: # we're using the tree algorithm
         if tree is None:
-            tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening)) # build the tree if needed            
+            tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening), quadrupole=quadrupole) # build the tree if needed            
         idx = tree.TreewalkIndices
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
@@ -77,7 +77,7 @@ def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=Fal
     else:
         return phi
 
-def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, G=1., theta=.7, tree=None, return_tree=False,parallel=False,method='adaptive'):
+def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, G=1., theta=.7, tree=None, return_tree=False,parallel=False,method='adaptive',quadrupole=False):
     """Returns the gravitational potential due to a set of particles, at a set of "target" positions that can be different from the particle positions, using either brute force or tree-based methods depending on the number of particles and target positions.
 
     Arguments:
@@ -116,7 +116,7 @@ def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=No
             tree = None
     else: # we're using the tree algorithm
         if tree is None:
-            tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source)) # build the tree if needed            
+            tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source), quadrupole=quadrupole) # build the tree if needed            
         
         if parallel:
             phi = PotentialTarget_tree_parallel(pos_target,h_target,tree,theta=theta,G=G)
@@ -129,7 +129,7 @@ def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=No
         return phi
             
 
-def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,parallel=False,method='adaptive'):
+def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,parallel=False,method='adaptive',quadrupole=False):
     """Returns the gravitational acceleration for a set of particles, due to those particles.
 
     Arguments:
@@ -161,10 +161,7 @@ def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,p
             tree = None
     else: # we're using the tree algorithm
         if tree is None:
-            tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening)) # build the tree if needed
-#            idx = tree.TreewalkIndices
-#            tree = ConstructTree(np.take(np.float64(pos),idx,axis=0),np.take(np.float64(m),idx), np.take(np.float64(softening),idx)) # rebuild in order
- #       else:
+            tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening), quadrupole=quadrupole) # build the tree if needed
         idx = tree.TreewalkIndices            
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
@@ -184,7 +181,7 @@ def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,p
     else:
         return g
 
-def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, G=1., theta=.7, tree=None, return_tree=False, parallel=False, method='adaptive'):
+def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, G=1., theta=.7, tree=None, return_tree=False, parallel=False, method='adaptive',quadrupole=False):
     """Returns the gravitational acceleration due to a set of particles, at a set of "target" positions that can be different from the particle positions, using either brute force or tree-based methods depending on the number of particles and target positions.
 
     Arguments:
@@ -223,7 +220,7 @@ def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, 
         if return_tree:
             tree = None
     else: # we're using the tree algorithm
-        if tree is None: tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source)) # build the tree if needed
+        if tree is None: tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source), quadrupole=quadrupole) # build the tree if needed
         if parallel:
             g = AccelTarget_tree_parallel(pos_target,h_target,tree,theta=theta,G=G)
         else:
