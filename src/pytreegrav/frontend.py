@@ -17,7 +17,7 @@ def valueTestMethod(method):
     if method not in methods:
         raise ValueError("Invalid method %s. Must be one of: %s"%(method,str(methods)))
 
-def ConstructTree(pos,m,softening=None):
+def ConstructTree(pos,m,softening=None,quadrupole=False):
     """Builds the tree containing particle data, for subsequent potential/field evaluation
     Arguments:
     pos -- shape (N,3) array of particle positions
