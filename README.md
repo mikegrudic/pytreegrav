@@ -18,7 +18,7 @@ m = np.repeat(1./N,N) # masses - let the system have unit mass
 h = np.repeat(0.01,N) # softening radii - these are optional, assumed 0 if not provided to the frontend functions
 ```
 
-Now we can use the ``Accel`` and ``Potential`` functions to compute the gravitational field and potential:
+Now we can use the ``Accel`` and ``Potential`` functions to compute the gravitational field and potential at each particle position:
 
 
 ```python
