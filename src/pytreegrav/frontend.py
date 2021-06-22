@@ -79,9 +79,9 @@ def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=Fal
         h_sorted = np.take(softening,idx)
         
         if parallel:
-            phi = PotentialTarget_tree_parallel(pos_sorted,h_sorted,tree,theta=theta,G=G)
+            phi = PotentialTarget_tree_parallel(pos_sorted,h_sorted,tree,theta=theta,G=G,quadrupole=quadrupole)
         else:
-            phi = PotentialTarget_tree(pos_sorted,h_sorted,tree,theta=theta,G=G)
+            phi = PotentialTarget_tree(pos_sorted,h_sorted,tree,theta=theta,G=G,quadrupole=quadrupole)
 
         # now reorder phi back to the order of the input positions
         phi = np.take(phi,idx.argsort())
@@ -137,9 +137,9 @@ def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=No
             tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source), quadrupole=quadrupole) # build the tree if needed            
         
         if parallel:
-            phi = PotentialTarget_tree_parallel(pos_target,h_target,tree,theta=theta,G=G)
+            phi = PotentialTarget_tree_parallel(pos_target,h_target,tree,theta=theta,G=G,quadrupole=quadrupole)
         else:
-            phi = PotentialTarget_tree(pos_target,h_target,tree,theta=theta,G=G)
+            phi = PotentialTarget_tree(pos_target,h_target,tree,theta=theta,G=G,quadrupole=quadrupole)
 
     if return_tree:
         return phi, tree
@@ -191,9 +191,9 @@ def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,p
         h_sorted = np.take(softening,idx)
         
         if parallel:
-            g = AccelTarget_tree_parallel(pos_sorted,h_sorted,tree,theta=theta,G=G)
+            g = AccelTarget_tree_parallel(pos_sorted,h_sorted,tree,theta=theta,G=G,quadrupole=quadrupole)
         else:
-            g = AccelTarget_tree(pos_sorted,h_sorted,tree,theta=theta,G=G)
+            g = AccelTarget_tree(pos_sorted,h_sorted,tree,theta=theta,G=G,quadrupole=quadrupole)
 
         # now g is in the tree-order: reorder it back to the original order
         g = np.take(g,idx.argsort(),axis=0)
@@ -248,9 +248,9 @@ def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, 
     else: # we're using the tree algorithm
         if tree is None: tree = ConstructTree(np.float64(pos_source),np.float64(m_source), np.float64(h_source), quadrupole=quadrupole) # build the tree if needed
         if parallel:
-            g = AccelTarget_tree_parallel(pos_target,h_target,tree,theta=theta,G=G)
+            g = AccelTarget_tree_parallel(pos_target,h_target,tree,theta=theta,G=G,quadrupole=quadrupole)
         else:
-            g = AccelTarget_tree(pos_target,h_target,tree,theta=theta,G=G)
+            g = AccelTarget_tree(pos_target,h_target,tree,theta=theta,G=G,quadrupole=quadrupole)
 
     if return_tree:
         return g, tree
