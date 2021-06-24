@@ -152,9 +152,15 @@ def ComputeMoments(tree, no, children): # does a recursive pass through the tree
         if tree.HasQuads:
             for c in children[no]:
                 if c > -1:
-                    hi, mi, quadi, comi = ComputeMoments(tree,c,children)
+                    comi = tree.Coordinates[c]
+                    quadi = tree.Quadrupoles[c]
                     ri = comi-com
-                    quad += quadi + mi * (3*np.outer(ri,ri) - np.dot(ri,ri)*np.identity(3)) # Calculate the quadrupole moment based on the moments of the subcells
+                    r2 = 0
+                    for k in range(3): r2 += ri[k]*ri[k]
+                    for k in range(3):
+                        for l in range(3):
+                            quad[k,l] += quadi[k,l] + mi * 3*ri[k]*ri[l]
+                            if k==l: quad[k,l] -= mi * r2 # Calculate the quadrupole moment based on the moments of the subcells
             tree.Quadrupoles[no] = quad
         delta = 0
         for dim in range(3):

@@ -78,7 +78,12 @@ def PotentialWalk_quad(pos,  tree, softening=0, no=-1, theta=0.7):
             no = tree.NextBranch[no]
         elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]*0.6+tree.Deltas[no]): # if we satisfy the criteria for accepting the monopole
             phi -= tree.Masses[no]/r
-            phi -= 0.5 * np.dot(np.dot(dx,tree.Quadrupoles[no]),dx)/(r*r*r*r*r) # Potential from the quadrupole moment
+            #phi -= 0.5 * np.dot(np.dot(dx,tree.Quadrupoles[no]),dx)/(r*r*r*r*r) # Potential from the quadrupole moment
+            quad = tree.Quadrupoles[no]
+            r5inv = 1 / (r*r*r*r*r)
+            for k in range(3):
+                for l in range(3):
+                    phi -= 0.5 * dx[k] * quad[k,l] * dx[l] * r5inv
             no = tree.NextBranch[no]
         else: # open the node
             no = tree.FirstSubnode[no]
@@ -159,27 +164,35 @@ def AccelWalk_quad(pos,  tree, softening=0, no=-1, theta=0.7): #,include_self_po
         r = sqrt(r2)
         h = max(tree.Softenings[no],softening)
         
-        sum_field = False
-        
         if no < tree.NumParticles: # if we're looking at a leaf/particle
             if r > 0:  # no self-force
                 if r < h: # within the softening radius
                     fac = tree.Masses[no] * ForceKernel(r,h) # fac stores the quantity M(<R)/R^3 to be used later for force computation
                 else: # use point mass force
                     fac = tree.Masses[no]/(r*r2)
-                sum_field = True
+            for k in range(3): g[k] += fac * dx[k] # monopole
             no = tree.NextBranch[no]
+            continue
         elif r > max(tree.Sizes[no]/theta + tree.Deltas[no], h+tree.Sizes[no]*0.6+tree.Deltas[no]): # if we satisfy the criteria for accepting the multipole expansion
             fac = tree.Masses[no]/(r*r2)
-            g -= dot(tree.Quadrupoles[no], dx/r)/(r*r*r*r) - 2.5*dot(dx/r, dot(tree.Quadrupoles[no], dx/r))*dx/(r*r*r*r*r)
-            sum_field = True                
+            quad = tree.Quadrupoles[no]
+#            g -= dot(tree.Quadrupoles[no], dx/r)/(r*r*r*r) - 2.5*dot(dx/r, dot(tree.Quadrupoles[no], dx/r))*dx/(r*r*r*r*r)
+            r5inv = 1 / (r2*r2*r)
+            quad_fac = 0
+            for k in range(3):
+                 g[k] += fac * dx[k] # monopole
+                 for l in range(3): # prepass to compute contraction of quad with dx
+                     quad_fac += quad[k,l] * dx[k] * dx[l] 
+            quad_fac *= r5inv / r2
+            for k in range(3):
+                g[k] += 2.5 * quad_fac * dx[k]
+                for l in range(3):
+                     g[k] -= quad[k,l] * dx[l] * r5inv
+                    
             no = tree.NextBranch[no] # go to the next branch in the tree
         else: # open the node
             no = tree.FirstSubnode[no]
             continue
-            
-        if sum_field: # OK, we have fac for this element and can now sum the force
-            for k in range(3): g[k] += fac * dx[k]
             
     return g
 
