@@ -117,12 +117,17 @@ def PotentialTarget(pos_target, pos_source, m_source, h_target=None, h_source=No
     ## test if method is correct, otherwise raise a ValueError
     valueTestMethod(method)
 
+    ## allow user to pass in tree without passing in source pos and m
+    ##  but catch if they don't pass in the tree.
+    if tree is None and (pos_source is None or m_source is None):
+        raise ValueError("Must pass either pos_source & m_source or source tree.")
+
     if h_target is None: h_target = np.zeros(len(pos_target))
-    if h_source is None: h_source = np.zeros(len(pos_source))
+    if h_source is None and pos_source is not None: h_source = np.zeros(len(pos_source))
 
     # figure out which method to use
     if method == 'adaptive':
-        if len(pos_target)*len(pos_source) > 10**6: method = 'tree'
+        if pos_source is None or len(pos_target)*len(pos_source) > 10**6: method = 'tree'
         else: method = 'bruteforce'
 
     if method == 'bruteforce': # we're using brute force
@@ -233,12 +238,17 @@ def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, 
     ## test if method is correct, otherwise raise a ValueError
     valueTestMethod(method)
 
+    ## allow user to pass in tree without passing in source pos and m
+    ##  but catch if they don't pass in the tree.
+    if tree is None and (pos_source is None or m_source is None):
+        raise ValueError("Must pass either pos_source & m_source or source tree.")
+
     if h_target is None: h_target = np.zeros(len(pos_target))
-    if h_source is None: h_source = np.zeros(len(pos_source))
+    if h_source is None and pos_source is not None: h_source = np.zeros(len(pos_source))
 
     # figure out which method to use
     if method == 'adaptive':
-        if len(pos_target)*len(pos_source) > 10**6: method = 'tree'
+        if pos_source is None or len(pos_target)*len(pos_source) > 10**6: method = 'tree'
         else: method = 'bruteforce'
 
     if method == 'bruteforce': # we're using brute force
