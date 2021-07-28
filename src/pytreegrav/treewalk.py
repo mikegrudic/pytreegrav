@@ -1,7 +1,15 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like, dot
-from numba import njit, prange
+from numba import njit, prange, get_num_threads
+from math import copysign
 from .kernel import *
 import numpy as np
+
+@njit(fastmath=True)
+def NearestImage(x,boxsize):
+    if abs(x) > boxsize/2: return -copysign(boxsize-abs(x),x)
+    else: return x
+    #define TMP_WRAP_X_S(x,y,z,sign) (x=((x)>boxHalf_X)?((x)-boxSize_X):(((x)<-boxHalf_X)?((x)+boxSize_X):(x))) 
+
 
 @njit(fastmath=True)
 def PotentialWalk(pos,  tree, softening=0, no=-1, theta=0.7):
@@ -105,7 +113,7 @@ def AccelWalk(pos,  tree, softening=0, no=-1, theta=0.7): #,include_self_potenti
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
     """
     if no < 0: no = tree.NumParticles # we default to the top-level node index
-    g = np.zeros(3,dtype=np.float64)
+    g = zeros(3,dtype=np.float64)
     dx = np.empty(3,dtype=np.float64)    
     
     while no > -1: # loop until we get to the end of the tree
@@ -153,7 +161,7 @@ def AccelWalk_quad(pos,  tree, softening=0, no=-1, theta=0.7): #,include_self_po
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
     """
     if no < 0: no = tree.NumParticles # we default to the top-level node index
-    g = np.zeros(3,dtype=np.float64)
+    g = zeros(3,dtype=np.float64)
     dx = np.empty(3,dtype=np.float64)    
     
     while no > -1: # loop until we get to the end of the tree
@@ -252,3 +260,274 @@ def AccelTarget_tree(pos_target, softening_target, tree, G=1., theta=0.7, quadru
 # JIT this function and its parallel version
 AccelTarget_tree_parallel = njit(AccelTarget_tree,fastmath=True,parallel=True)
 AccelTarget_tree = njit(AccelTarget_tree,fastmath=True)
+
+
+@njit(fastmath=True)
+def DensityCorrWalk(pos,  tree, rbins, max_bin_size_ratio=100, theta=0.7, no=-1,boxsize=0):
+    """Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance
+
+    Arguments:
+    pos - (3,) array containing position of interest
+    tree - octree object storing the tree structure    
+
+    Keyword arguments:
+    softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    """
+    if no < 0: no = tree.NumParticles # we default to the top-level node index        
+    
+    Nbins = rbins.shape[0] - 1
+    mbin = zeros(Nbins)
+    counts = zeros(Nbins)
+    rmin = rbins[0]
+    rmax = rbins[-1]
+    dx = np.empty(3,dtype=np.float64)
+
+    logr_min = np.log10(rmin)
+    logr_max = np.log10(rmax)
+    dlogr = logr_max - logr_min
+    
+    while no > -1:
+        r = 0
+        for k in range(3): 
+            dx[k] = tree.Coordinates[no,k] - pos[k]
+            if boxsize>0: dx[k] = NearestImage(dx[k],boxsize)
+            r += dx[k]*dx[k]
+
+        r = sqrt(r)    
+
+        within_bounds = (r>rmin) and (r < rmax)
+        if within_bounds:
+            logr = np.log10(r)
+            r_idx = int(Nbins*(logr - logr_min)/dlogr)
+            if no < tree.NumParticles:
+                mbin[r_idx] += tree.Masses[no]
+                no = tree.NextBranch[no]
+            elif (r>max(tree.Sizes[no]/theta + tree.Deltas[no], tree.Sizes[no]*0.6+tree.Deltas[no])) and (tree.Sizes[no] < max_bin_size_ratio*(rbins[r_idx+1]-rbins[r_idx])):
+                mbin[r_idx] += tree.Masses[no]
+                no = tree.NextBranch[no]
+            else:
+                no = tree.FirstSubnode[no]
+        else:
+            if no < tree.NumParticles:
+                no = tree.NextBranch[no]
+            elif r>max(tree.Sizes[no]/theta + tree.Deltas[no], tree.Sizes[no]*0.6+tree.Deltas[no]):
+                no = tree.NextBranch[no]
+            else:
+                no = tree.FirstSubnode[no]            
+    return mbin
+
+def DensityCorrFunc_tree(pos,tree, rbins, max_bin_size_ratio=100,theta=0.7,boxsize=0):
+    """Returns the average mass in radial bins surrounding a point
+
+    Arguments:
+    pos -- shape (N,3) array of particle positions
+    tree -- Octree instance containing the positions, masses, and softenings of the source particles
+
+    Optional arguments:
+    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width
+
+    Returns:
+    mbins -- arrays containing total mass in each bin
+    """
+    Nthreads = get_num_threads()
+    mbin = zeros((Nthreads,rbins.shape[0] - 1))
+    # break into chunks for parallelization
+    for chunk in prange(Nthreads):
+        for i in range(chunk,pos.shape[0],Nthreads):
+            dmbin = DensityCorrWalk(pos[i], tree, rbins, max_bin_size_ratio=max_bin_size_ratio, theta=theta,boxsize=boxsize)
+            for j in range(mbin.shape[1]): mbin[chunk,j] += dmbin[j]
+    return mbin.sum(0)/pos.shape[0]
+
+# JIT this function and its parallel version
+DensityCorrFunc_tree_parallel = njit(DensityCorrFunc_tree,fastmath=True,parallel=True)
+DensityCorrFunc_tree = njit(DensityCorrFunc_tree,fastmath=True)
+
+
+@njit(fastmath=True)
+def VelocityCorrWalk(pos, vel, tree, rbins, max_bin_size_ratio=100, theta=0.7, no=-1,boxsize=0):
+    """Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance
+
+    Arguments:
+    pos - (3,) array containing position of interest
+    vel - (3,) array containing velocity of point of interest
+    tree - octree object storing the tree structure    
+
+    Keyword arguments:
+    softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    """
+    if no < 0: no = tree.NumParticles # we default to the top-level node index        
+    
+    Nbins = rbins.shape[0] - 1
+    binsums = zeros(Nbins)
+    wtsums = zeros(Nbins)
+#    counts = zeros(Nbins)
+    rmin = rbins[0]
+    rmax = rbins[-1]
+    dx = np.empty(3,dtype=np.float64)
+
+    logr_min = np.log10(rmin)
+    logr_max = np.log10(rmax)
+    dlogr = logr_max - logr_min
+    
+    while no > -1:
+        r = 0
+        for k in range(3): 
+            dx[k] = tree.Coordinates[no,k] - pos[k]
+            if boxsize>0: dx[k] = NearestImage(dx[k],boxsize)
+            r += dx[k]*dx[k]
+        r = sqrt(r)
+        
+        within_bounds = (r>rmin) and (r < rmax)
+        if within_bounds:
+            logr = np.log10(r)
+            r_idx = int(Nbins*(logr - logr_min)/dlogr)
+            if no < tree.NumParticles:
+                vprod = 0
+                for k in range(3): vprod += vel[k] * tree.Velocities[no][k] * tree.Masses[no]
+                binsums[r_idx] += vprod
+                wtsums[r_idx] += tree.Masses[no]
+                no = tree.NextBranch[no]                
+            elif r>max(tree.Sizes[no]/theta + tree.Deltas[no], tree.Sizes[no]*0.6+tree.Deltas[no]) and tree.Sizes[no] < max_bin_size_ratio*(rbins[r_idx+1]-rbins[r_idx]):
+                vprod = 0
+                for k in range(3): vprod += vel[k] * tree.Velocities[no][k] * tree.Masses[no]
+                binsums[r_idx] += vprod
+                wtsums[r_idx] += tree.Masses[no]
+                no = tree.NextBranch[no]
+            else:
+                no = tree.FirstSubnode[no]
+        else:
+            if no < tree.NumParticles:
+                no = tree.NextBranch[no]
+            elif r>max(tree.Sizes[no]/theta + tree.Deltas[no], tree.Sizes[no]*0.6+tree.Deltas[no]):
+                no = tree.NextBranch[no]
+            else:
+                no = tree.FirstSubnode[no]                        
+    return wtsums, binsums
+
+def VelocityCorrFunc_tree(pos,vel,weight,tree, rbins, max_bin_size_ratio=100,theta=0.7,boxsize=0):
+    """Returns the average mass in radial bins surrounding a point
+
+    Arguments:
+    pos -- shape (N,3) array of particle positions
+    tree -- Octree instance containing the positions, masses, and softenings of the source particles
+
+    Optional arguments:
+    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)
+
+    Returns:
+    mbins -- arrays containing total mass in each bin
+    """
+    Nthreads = get_num_threads()
+    mbin = zeros((Nthreads, rbins.shape[0] - 1))
+    wtsum = zeros_like(mbin)
+        # break into chunks for parallelization
+    for chunk in prange(Nthreads):
+        for i in range(chunk,pos.shape[0],Nthreads):
+            dwtsum, dmbin = VelocityCorrWalk(pos[i], vel[i], tree, rbins, max_bin_size_ratio=max_bin_size_ratio, theta=theta,boxsize=boxsize)
+            for j in range(mbin.shape[1]):
+                mbin[chunk,j] += dmbin[j]*weight[i]
+                wtsum[chunk,j] += weight[i] * dwtsum[j]
+    return mbin.sum(0)/wtsum.sum(0)
+
+# JIT this function and its parallel version
+VelocityCorrFunc_tree_parallel = njit(VelocityCorrFunc_tree,fastmath=True,parallel=True)
+VelocityCorrFunc_tree = njit(VelocityCorrFunc_tree,fastmath=True)
+
+
+@njit(fastmath=True)
+def VelocityStructWalk(pos, vel, tree, rbins, max_bin_size_ratio=100, theta=0.7, no=-1,boxsize=0):
+    """Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance
+
+    Arguments:
+    pos - (3,) array containing position of interest
+    vel - (3,) array containing velocity of point of interest
+    tree - octree object storing the tree structure    
+
+    Keyword arguments:
+    softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    """
+    if no < 0: no = tree.NumParticles # we default to the top-level node index        
+    
+    Nbins = rbins.shape[0] - 1
+    binsums = zeros(Nbins)
+    wtsums = zeros(Nbins)
+    rmin = rbins[0]
+    rmax = rbins[-1]
+    dx = np.empty(3,dtype=np.float64)
+    logr_min = np.log10(rmin)
+    logr_max = np.log10(rmax)
+    dlogr = logr_max - logr_min
+    
+    while no > -1:
+        r = 0
+        for k in range(3): 
+            dx[k] = tree.Coordinates[no,k] - pos[k]
+            if boxsize>0: dx[k] = NearestImage(dx[k],boxsize)
+            r += dx[k]*dx[k]
+        r = sqrt(r)
+        
+        within_bounds = (r>rmin) and (r < rmax)
+        if within_bounds:
+            logr = np.log10(r)
+            r_idx = int(Nbins*(logr - logr_min)/dlogr)
+            if no < tree.NumParticles:
+                vprod = 0
+                for k in range(3): vprod += (vel[k] - tree.Velocities[no][k]) * (vel[k] - tree.Velocities[no][k]) * tree.Masses[no]
+                binsums[r_idx] += vprod
+                wtsums[r_idx] += tree.Masses[no]
+                no = tree.NextBranch[no]                
+            elif r>max(tree.Sizes[no]/theta + tree.Deltas[no], tree.Sizes[no]*0.6+tree.Deltas[no]) and tree.Sizes[no] < max_bin_size_ratio*(rbins[r_idx+1]-rbins[r_idx]):
+                vprod = 0
+                for k in range(3): vprod += (vel[k] - tree.Velocities[no][k]) * (vel[k] - tree.Velocities[no][k]) * tree.Masses[no]
+                binsums[r_idx] += vprod + tree.VelocityDisp[no]*tree.Masses[no]
+                wtsums[r_idx] += tree.Masses[no]
+                no = tree.NextBranch[no]
+            else:
+                no = tree.FirstSubnode[no]
+        else:
+            if no < tree.NumParticles:
+                no = tree.NextBranch[no]
+            elif r>max(tree.Sizes[no]/theta + tree.Deltas[no], tree.Sizes[no]*0.6+tree.Deltas[no]):
+                no = tree.NextBranch[no]
+            else:
+                no = tree.FirstSubnode[no]                        
+    return wtsums, binsums
+
+def VelocityStructFunc_tree(pos,vel,weight,tree, rbins, max_bin_size_ratio=100,theta=0.7,boxsize=0):
+    """Returns the average mass in radial bins surrounding a point
+
+    Arguments:
+    pos -- shape (N,3) array of particle positions
+    tree -- Octree instance containing the positions, masses, and softenings of the source particles
+
+    Optional arguments:
+    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)
+
+    Returns:
+    mbins -- arrays containing total mass in each bin
+    """
+
+    Nthreads = get_num_threads()
+    mbin = zeros((Nthreads,rbins.shape[0] - 1))
+    wtsum = zeros_like(mbin)
+    # break into chunks for parallelization
+    for chunk in prange(Nthreads):
+        for i in range(chunk,pos.shape[0],Nthreads):
+            dwtsum, dmbin = VelocityStructWalk(pos[i], vel[i], tree, rbins, max_bin_size_ratio=max_bin_size_ratio, theta=theta,boxsize=boxsize)
+            for j in range(mbin.shape[1]):
+                mbin[chunk,j] += dmbin[j]*weight[i]
+                wtsum[chunk,j] += weight[i] * dwtsum[j]
+    return mbin.sum(0)/wtsum.sum(0)
+
+# JIT this function and its parallel version
+VelocityStructFunc_tree_parallel = njit(VelocityStructFunc_tree,fastmath=True,parallel=True)
+VelocityStructFunc_tree = njit(VelocityStructFunc_tree,fastmath=True)

@@ -3,6 +3,7 @@ from numba import njit, prange
 from numpy import zeros_like, sqrt
 from .kernel import *
 from .octree import *
+from .dynamic_tree import *
 from .treewalk import *
 from .bruteforce import *
 
@@ -17,7 +18,7 @@ def valueTestMethod(method):
     if method not in methods:
         raise ValueError("Invalid method %s. Must be one of: %s"%(method,str(methods)))
 
-def ConstructTree(pos,m,softening=None,quadrupole=False):
+def ConstructTree(pos,m,softening=None,quadrupole=False,vel=None):
     """Builds the tree containing particle data, for subsequent potential/field evaluation
     Arguments:
     pos -- shape (N,3) array of particle positions
@@ -31,7 +32,10 @@ def ConstructTree(pos,m,softening=None,quadrupole=False):
     if not (np.all(np.isfinite(pos)) and np.all(np.isfinite(m)) and np.all(np.isfinite(softening))):
         print("Invalid input detected - aborting treebuild to avoid going into an infinite loop!")
         raise
-    return Octree(pos,m,softening,quadrupole=quadrupole)
+    if vel is None:
+        return Octree(pos,m,softening,quadrupole=quadrupole)
+    else:
+        return DynamicOctree(pos, m,softening,vel, quadrupole=quadrupole)
 
 def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,parallel=False,method='adaptive',quadrupole=False):
     """Returns the gravitational potential for a set of particles with positions x and masses m, at the positions of those particles, using either brute force or tree-based methods depending on the number of particles.
@@ -266,3 +270,133 @@ def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, 
         return g, tree
     else:
         return g
+
+def DensityCorrFunc(pos, m, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0):
+    """Computes the average amount of mass in radial bin [r,r+dr] around a point, provided a set of radial bins.
+
+    Arguments:
+    pos -- shape (N,3) array of particle positions
+    m -- shape (N,) array of particle masses
+
+    Optional arguments:
+    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins. Otherwise MUST BE LOGARITHMICALLY SPACED (default None)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)
+    theta -- cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
+    parallel -- If True, will parallelize the force summation over all available cores. (default False)
+    tree -- optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)
+    return_tree -- return the tree used for future use as the third element in the return list (default False)
+    boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
+
+    Returns:
+    rbins, mbins -- arrays containing radial bin edges and total mass in each bin
+    """
+
+    if rbins is None:
+        r = np.sort(np.sqrt(np.sum((pos-np.median(pos,axis=0))**2,axis=1)))
+        rbins = 10**np.linspace(np.log10(r[10]),np.log10(r[-1]), int(len(r)**(1./3)))
+        
+    if tree is None:
+        softening = np.zeros_like(m)
+        tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening)) # build the tree if needed            
+    idx = tree.TreewalkIndices
+
+    # sort by the order they appear in the treewalk to improve access pattern efficiency
+    pos_sorted = np.take(pos,idx,axis=0)
+        
+    if parallel:
+        mbins = DensityCorrFunc_tree_parallel(pos_sorted,tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+    else:
+        mbins = DensityCorrFunc_tree(pos_sorted,tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+
+    if return_tree:
+        return rbins, mbins, tree
+    else:
+        return rbins, mbins
+
+def VelocityCorrFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0):
+    """Computes the weighted average product v(x)v(x+r), in radial bins
+
+    Arguments:
+    pos -- shape (N,3) array of particle positions
+    m -- shape (N,) array of particle masses - substitute volumes if you want the usual volume-weighted correlation function
+    v -- shape (N,3) array of the vector field you want the correlation function for
+
+    Optional arguments:
+    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins. Otherwise MUST BE LOGARITHMICALLY SPACED (default None)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)
+    theta -- cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
+    parallel -- If True, will parallelize the force summation over all available cores. (default False)
+    tree -- optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)
+    return_tree -- return the tree used for future use as the third element in the return list (default False)
+    boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
+
+    Returns:
+    rbins, corr -- arrays containing radial bin edges and correlation function in those binds
+    """
+
+    if rbins is None:
+        r = np.sort(np.sqrt(np.sum((pos-np.median(pos,axis=0))**2,axis=1)))
+        rbins = 10**np.linspace(np.log10(r[10]),np.log10(r[-1]), int(len(r)**(1./3)))
+        
+    if tree is None:
+        softening = np.zeros_like(m)
+        tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening),vel=v) # build the tree if needed            
+    idx = tree.TreewalkIndices
+
+    # sort by the order they appear in the treewalk to improve access pattern efficiency
+    pos_sorted = np.take(pos,idx,axis=0)
+    v_sorted = np.take(v, idx, axis=0)
+    wt_sorted = np.take(m,idx,axis=0)
+    if parallel:
+        corr = VelocityCorrFunc_tree_parallel(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+    else:
+        corr = VelocityCorrFunc_tree(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+
+    if return_tree:
+        return rbins, corr, tree
+    else:
+        return rbins, corr
+
+def VelocityStructFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0):
+    """Computes the average value of |v(x)-(x+r)|^2, in radial bins
+
+    Arguments:
+    pos -- shape (N,3) array of particle positions
+    m -- shape (N,) array of particle masses - substitute volumes if you want the normal volume-weighted correlation function
+    v -- shape (N,3) array of the field you want the correlation function for
+
+    Optional arguments:
+    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins. Otherwise MUST BE LOGARITHMICALLY SPACED (default None)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)
+    theta -- cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
+    parallel -- If True, will parallelize the force summation over all available cores. (default False)
+    tree -- optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)
+    return_tree -- return the tree used for future use as the third element in the return list (default False)
+    boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
+
+    Returns:
+    rbins, Sv -- arrays containing radial bin edges and structure function in those bins
+    """
+
+    if rbins is None:
+        r = np.sort(np.sqrt(np.sum((pos-np.median(pos,axis=0))**2,axis=1)))
+        rbins = 10**np.linspace(np.log10(r[10]),np.log10(r[-1]), int(len(r)**(1./3)))
+        
+    if tree is None:
+        softening = np.zeros_like(m)
+        tree = ConstructTree(np.float64(pos),np.float64(m), np.float64(softening),vel=v) # build the tree if needed            
+    idx = tree.TreewalkIndices
+
+    # sort by the order they appear in the treewalk to improve access pattern efficiency
+    pos_sorted = np.take(pos,idx,axis=0)
+    v_sorted = np.take(v, idx, axis=0)
+    wt_sorted = np.take(m,idx,axis=0)
+    if parallel:
+        Sv = VelocityStructFunc_tree_parallel(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+    else:
+        Sv = VelocityStructFunc_tree(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+
+    if return_tree:
+        return rbins, Sv, tree
+    else:
+        return rbins, Sv
