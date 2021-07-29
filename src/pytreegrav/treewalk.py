@@ -316,15 +316,15 @@ def DensityCorrWalk(pos,  tree, rbins, max_bin_size_ratio=100, theta=0.7, no=-1,
         if within_bounds:
             logr = np.log10(r)
             r_idx = int(Nbins*(logr - logr_min)/dlogr)
-            if no < tree.NumParticles:
+            if no < tree.NumParticles:            
                 mbin[r_idx] += tree.Masses[no]
                 no = tree.NextBranch[no]
             elif (r>max(tree.Sizes[no]/theta + tree.Deltas[no], tree.Sizes[no]*0.6+tree.Deltas[no])) and (tree.Sizes[no] < max_bin_size_ratio*(rbins[r_idx+1]-rbins[r_idx])):
                 if weighted_binning:
                     do_weighted_binning(tree, no, rbins, mbin, r, r_idx, 1)
                 else:
-#                    rnew = r+2*(np.random.rand()-0.5)*tree.Sizes[no]
-#                    r_idx = int(Nbins*(np.log10(rnew) - logr_min)/dlogr)
+                    rnew = r+(np.random.rand()-0.5)*tree.Sizes[no]
+                    r_idx = int(Nbins*(np.log10(rnew) - logr_min)/dlogr)
                     mbin[r_idx] += tree.Masses[no]
                 no = tree.NextBranch[no]
             else:
@@ -419,6 +419,8 @@ def VelocityCorrWalk(pos, vel, tree, rbins, max_bin_size_ratio=100, theta=0.7, n
                     do_weighted_binning(tree, no, rbins, binsums, r, r_idx, vprod)
                     do_weighted_binning(tree, no, rbins, wtsums, r, r_idx, 1)
                 else:
+                    rnew = r+(np.random.rand()-0.5)*tree.Sizes[no]
+                    r_idx = int(Nbins*(np.log10(rnew) - logr_min)/dlogr)
                     binsums[r_idx] += vprod * tree.Masses[no]
                     wtsums[r_idx] += tree.Masses[no]
                 no = tree.NextBranch[no]
@@ -517,6 +519,8 @@ def VelocityStructWalk(pos, vel, tree, rbins, max_bin_size_ratio=100, theta=0.7,
                     do_weighted_binning(tree, no, rbins, binsums, r, r_idx, vprod)
                     do_weighted_binning(tree, no, rbins, wtsums, r, r_idx, 1)
                 else:
+                    rnew = r+(np.random.rand()-0.5)*tree.Sizes[no]
+                    r_idx = int(Nbins*(np.log10(rnew) - logr_min)/dlogr)
                     binsums[r_idx] += vprod * tree.Masses[no]
                     wtsums[r_idx] += tree.Masses[no]
                 no = tree.NextBranch[no]
