@@ -271,7 +271,7 @@ def AccelTarget(pos_target, pos_source, m_source, h_target=None, h_source=None, 
     else:
         return g
 
-def DensityCorrFunc(pos, m, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0):
+def DensityCorrFunc(pos, m, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0,weighted_binning=False):
     """Computes the average amount of mass in radial bin [r,r+dr] around a point, provided a set of radial bins.
 
     Arguments:
@@ -304,16 +304,16 @@ def DensityCorrFunc(pos, m, rbins=None, max_bin_size_ratio=100, theta=1., tree=N
     pos_sorted = np.take(pos,idx,axis=0)
         
     if parallel:
-        mbins = DensityCorrFunc_tree_parallel(pos_sorted,tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+        mbins = DensityCorrFunc_tree_parallel(pos_sorted,tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize,weighted_binning=weighted_binning)
     else:
-        mbins = DensityCorrFunc_tree(pos_sorted,tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+        mbins = DensityCorrFunc_tree(pos_sorted,tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize,weighted_binning=weighted_binning)
 
     if return_tree:
         return rbins, mbins, tree
     else:
         return rbins, mbins
 
-def VelocityCorrFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0):
+def VelocityCorrFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0,weighted_binning=False):
     """Computes the weighted average product v(x)v(x+r), in radial bins
 
     Arguments:
@@ -348,16 +348,16 @@ def VelocityCorrFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., tr
     v_sorted = np.take(v, idx, axis=0)
     wt_sorted = np.take(m,idx,axis=0)
     if parallel:
-        corr = VelocityCorrFunc_tree_parallel(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+        corr = VelocityCorrFunc_tree_parallel(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize,weighted_binning=weighted_binning)
     else:
-        corr = VelocityCorrFunc_tree(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+        corr = VelocityCorrFunc_tree(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize,weighted_binning=weighted_binning)
 
     if return_tree:
         return rbins, corr, tree
     else:
         return rbins, corr
 
-def VelocityStructFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0):
+def VelocityStructFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., tree=None, return_tree=False, parallel=False,boxsize=0,weighted_binning=False):
     """Computes the average value of |v(x)-(x+r)|^2, in radial bins
 
     Arguments:
@@ -392,9 +392,9 @@ def VelocityStructFunc(pos, m, v, rbins=None, max_bin_size_ratio=100, theta=1., 
     v_sorted = np.take(v, idx, axis=0)
     wt_sorted = np.take(m,idx,axis=0)
     if parallel:
-        Sv = VelocityStructFunc_tree_parallel(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+        Sv = VelocityStructFunc_tree_parallel(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize,weighted_binning=weighted_binning)
     else:
-        Sv = VelocityStructFunc_tree(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize)
+        Sv = VelocityStructFunc_tree(pos_sorted, v_sorted, wt_sorted, tree, rbins, max_bin_size_ratio=max_bin_size_ratio,theta=theta,boxsize=boxsize,weighted_binning=weighted_binning)
 
     if return_tree:
         return rbins, Sv, tree

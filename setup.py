@@ -5,10 +5,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="pytreegrav",
-    version="0.23",
+    version="0.25",
     author="Mike Grudic",
     author_email="mike.grudich@gmail.com",
     description='Fast approximate gravitational force and potential calculations',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     project_urls={
         "Bug Tracker": "https://github.com/mikegrudic/pytreegrav",
     },
