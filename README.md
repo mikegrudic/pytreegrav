@@ -1,6 +1,10 @@
 # Introduction
 pytreegrav is a package for computing the gravitational potential and/or field of a set of particles. It includes methods for brute-force direction summation and for the fast, approximate Barnes-Hut treecode method. For the Barnes-Hut method we implement an oct-tree as a numba jitclass to achieve much higher peformance than the equivalent pure Python implementation, without writing a single line of C or Cython.
 
+# Installation
+
+```pip install pytreegrav``` or clone the repo and run ```python setup.py install``` from the repo directory.
+
 # Walkthrough
 First let's import the stuff we want and generate some particle positions and masses - these would be your particle data for whatever your problem is.
 
