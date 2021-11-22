@@ -69,8 +69,8 @@ By default, pytreegrav will try to make the optimal choice between brute-force a
 
 As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding 10^4. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel i9 9900k workstation:
 
-.. image:: ../../images/CPU_Time_serial.png
-   :target: ../../images/CPU_Time_serial.png
+.. image:: ./CPU_Time_serial.png
+   :target: ./CPU_Time_serial.png
    :alt: Benchmark
 
 

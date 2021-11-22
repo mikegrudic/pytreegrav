@@ -12,7 +12,7 @@ Welcome to pytreegrav's documentation!
 
    usage/installation
    usage/quickstart
-
+   frontend_API
 
 Indices and tables
 ==================
