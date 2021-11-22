@@ -1,0 +1,244 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quickstart &#8212; pytreegrav 0.27 documentation</title>
+    <link rel="stylesheet" href="../_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    <script id="documentation_options" data-url_root="../" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="API Documentation" href="../frontend_API.html" />
+    <link rel="prev" title="Installation" href="installation.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <div class="section" id="quickstart">
+<h1>Quickstart<a class="headerlink" href="#quickstart" title="Permalink to this headline">¶</a></h1>
+<p>pytreegrav is a package for computing the gravitational potential and/or field of a set of particles. It includes methods for brute-force direction summation and for the fast, approximate Barnes-Hut treecode method. For the Barnes-Hut method we implement an oct-tree as a numba jitclass to achieve much higher peformance than the equivalent pure Python implementation.</p>
+<p>First let’s import the stuff we want and generate some particle positions and masses - these would be your particle data for whatever your problem is.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">from</span> <span class="nn">pytreegrav</span> <span class="kn">import</span> <span class="n">Accel</span><span class="p">,</span> <span class="n">Potential</span>
+</pre></div>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">N</span> <span class="o">=</span> <span class="mi">10</span><span class="o">**</span><span class="mi">5</span> <span class="c1"># number of particles</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">N</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span> <span class="c1"># positions randomly sampled in the unit cube</span>
+<span class="n">m</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="mf">1.</span><span class="o">/</span><span class="n">N</span><span class="p">,</span><span class="n">N</span><span class="p">)</span> <span class="c1"># masses - let the system have unit mass</span>
+<span class="n">h</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="mf">0.01</span><span class="p">,</span><span class="n">N</span><span class="p">)</span> <span class="c1"># softening radii - these are optional, assumed 0 if not provided to the frontend functions</span>
+</pre></div>
+</div>
+<p>Now we can use the <code class="docutils literal notranslate"><span class="pre">Accel</span></code> and <code class="docutils literal notranslate"><span class="pre">Potential</span></code> functions to compute the gravitational field and potential at each particle position:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">Accel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">Potential</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">[[</span><span class="o">-</span><span class="mf">0.1521787</span>   <span class="mf">0.2958852</span>  <span class="o">-</span><span class="mf">0.30109005</span><span class="p">]</span>
+ <span class="p">[</span><span class="o">-</span><span class="mf">0.50678204</span> <span class="o">-</span><span class="mf">0.37489886</span> <span class="o">-</span><span class="mf">1.0558666</span> <span class="p">]</span>
+ <span class="p">[</span><span class="o">-</span><span class="mf">0.24650087</span>  <span class="mf">0.95423467</span> <span class="o">-</span><span class="mf">0.175074</span>  <span class="p">]</span>
+ <span class="o">...</span>
+ <span class="p">[</span> <span class="mf">0.87868472</span> <span class="o">-</span><span class="mf">1.28332176</span> <span class="o">-</span><span class="mf">0.22718531</span><span class="p">]</span>
+ <span class="p">[</span><span class="o">-</span><span class="mf">0.41962742</span>  <span class="mf">0.32372245</span> <span class="o">-</span><span class="mf">1.31829084</span><span class="p">]</span>
+ <span class="p">[</span> <span class="mf">2.45127054</span>  <span class="mf">0.38292881</span>  <span class="mf">0.05820412</span><span class="p">]]</span>
+<span class="p">[</span><span class="o">-</span><span class="mf">2.35518057</span> <span class="o">-</span><span class="mf">2.19299372</span> <span class="o">-</span><span class="mf">2.28494218</span> <span class="o">...</span> <span class="o">-</span><span class="mf">2.11783337</span> <span class="o">-</span><span class="mf">2.1653377</span>
+ <span class="o">-</span><span class="mf">1.80464695</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>By default, pytreegrav will try to make the optimal choice between brute-force and tree methods for speed, but we can also force it to use one method or another. Let’s try both and compare their runtimes:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">time</span> <span class="kn">import</span> <span class="n">time</span>
+<span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+<span class="c1"># tree gravitational acceleration</span>
+<span class="n">accel_tree</span> <span class="o">=</span> <span class="n">Accel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;tree&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Tree accel runtime: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+
+<span class="n">accel_bruteforce</span> <span class="o">=</span> <span class="n">Accel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;bruteforce&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Brute force accel runtime: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+
+<span class="n">phi_tree</span> <span class="o">=</span> <span class="n">Potential</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;tree&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Tree potential runtime: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+
+<span class="n">phi_bruteforce</span> <span class="o">=</span> <span class="n">Potential</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;bruteforce&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Brute force potential runtime: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Tree</span> <span class="n">accel</span> <span class="n">runtime</span><span class="p">:</span> <span class="mf">0.927745</span><span class="n">s</span>
+<span class="n">Brute</span> <span class="n">force</span> <span class="n">accel</span> <span class="n">runtime</span><span class="p">:</span> <span class="mf">44.1175</span><span class="n">s</span>
+<span class="n">Tree</span> <span class="n">potential</span> <span class="n">runtime</span><span class="p">:</span> <span class="mf">0.802386</span><span class="n">s</span>
+<span class="n">Brute</span> <span class="n">force</span> <span class="n">potential</span> <span class="n">runtime</span><span class="p">:</span> <span class="mf">20.0234</span><span class="n">s</span>
+</pre></div>
+</div>
+<p>As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding 10^4. Here’s an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel i9 9900k workstation:</p>
+<a class="reference external image-reference" href="./CPU_Time_serial.png"><img alt="Benchmark" src="../_images/CPU_Time_serial.png" /></a>
+<p>But there’s no free lunch here: the tree methods are approximate. Let’s quantify the RMS errors of the stuff we just computed, compared to the exact brute-force solutions:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acc_error</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">accel_tree</span><span class="o">-</span><span class="n">accel_bruteforce</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)))</span> <span class="c1"># RMS force error</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;RMS force error: &quot;</span><span class="p">,</span> <span class="n">acc_error</span><span class="p">)</span>
+<span class="n">phi_error</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">phi_tree</span> <span class="o">-</span> <span class="n">phi_bruteforce</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;RMS potential error: &quot;</span><span class="p">,</span> <span class="n">phi_error</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">RMS</span> <span class="n">force</span> <span class="n">error</span><span class="p">:</span>  <span class="mf">0.006739311224338851</span>
+<span class="n">RMS</span> <span class="n">potential</span> <span class="n">error</span><span class="p">:</span>  <span class="mf">0.0003888328578588027</span>
+</pre></div>
+</div>
+<p>The above errors are typical for default settings: ~1% force error and ~0.1% potential error. The error in the tree approximation is controlled by the Barnes-Hut opening angle <code class="docutils literal notranslate"><span class="pre">theta</span></code>, set to 0.7 by default. Smaller <code class="docutils literal notranslate"><span class="pre">theta</span></code> gives higher accuracy, but also runs slower:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">thetas</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span><span class="mf">0.2</span><span class="p">,</span><span class="mf">0.4</span><span class="p">,</span><span class="mf">0.8</span> <span class="c1"># different thetas to try</span>
+<span class="k">for</span> <span class="n">theta</span> <span class="ow">in</span> <span class="n">thetas</span><span class="p">:</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+    <span class="n">accel_tree</span> <span class="o">=</span> <span class="n">Accel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;tree&#39;</span><span class="p">,</span><span class="n">theta</span><span class="o">=</span><span class="n">theta</span><span class="p">)</span>
+    <span class="n">acc_error</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">accel_tree</span><span class="o">-</span><span class="n">accel_bruteforce</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;theta=</span><span class="si">%g</span><span class="s2"> Runtime: </span><span class="si">%g</span><span class="s2">s RMS force error: </span><span class="si">%g</span><span class="s2">&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">theta</span><span class="p">,</span> <span class="n">time</span><span class="p">()</span><span class="o">-</span><span class="n">t</span><span class="p">,</span> <span class="n">acc_error</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">theta</span><span class="o">=</span><span class="mf">0.1</span> <span class="n">Runtime</span><span class="p">:</span> <span class="mf">63.1738</span><span class="n">s</span> <span class="n">RMS</span> <span class="n">force</span> <span class="n">error</span><span class="p">:</span> <span class="mf">3.78978e-05</span>
+<span class="n">theta</span><span class="o">=</span><span class="mf">0.2</span> <span class="n">Runtime</span><span class="p">:</span> <span class="mf">14.3356</span><span class="n">s</span> <span class="n">RMS</span> <span class="n">force</span> <span class="n">error</span><span class="p">:</span> <span class="mf">0.000258755</span>
+<span class="n">theta</span><span class="o">=</span><span class="mf">0.4</span> <span class="n">Runtime</span><span class="p">:</span> <span class="mf">2.91292</span><span class="n">s</span> <span class="n">RMS</span> <span class="n">force</span> <span class="n">error</span><span class="p">:</span> <span class="mf">0.00148698</span>
+<span class="n">theta</span><span class="o">=</span><span class="mf">0.8</span> <span class="n">Runtime</span><span class="p">:</span> <span class="mf">0.724668</span><span class="n">s</span> <span class="n">RMS</span> <span class="n">force</span> <span class="n">error</span><span class="p">:</span> <span class="mf">0.0105937</span>
+</pre></div>
+</div>
+<p>Both brute-force and tree-based calculations can be parallelized across all available logical cores via OpenMP, by specifying <code class="docutils literal notranslate"><span class="pre">parallel=True</span></code>. This can speed things up considerably, with parallel scaling that will vary with your core and particle number:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">time</span> <span class="kn">import</span> <span class="n">time</span>
+<span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+<span class="c1"># tree gravitational acceleration</span>
+<span class="n">accel_tree</span> <span class="o">=</span> <span class="n">Accel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;tree&#39;</span><span class="p">,</span><span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Tree accel runtime in parallel: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+
+<span class="n">accel_bruteforce</span> <span class="o">=</span> <span class="n">Accel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;bruteforce&#39;</span><span class="p">,</span><span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Brute force accel runtime in parallel: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+
+<span class="n">phi_tree</span> <span class="o">=</span> <span class="n">Potential</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;tree&#39;</span><span class="p">,</span><span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Tree potential runtime in parallel: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+
+<span class="n">phi_bruteforce</span> <span class="o">=</span> <span class="n">Potential</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;bruteforce&#39;</span><span class="p">,</span><span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Brute force potential runtime in parallel: </span><span class="si">%g</span><span class="s2">s&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t</span><span class="p">));</span> <span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">Tree</span> <span class="n">accel</span> <span class="n">runtime</span> <span class="ow">in</span> <span class="n">parallel</span><span class="p">:</span> <span class="mf">0.222271</span><span class="n">s</span>
+<span class="n">Brute</span> <span class="n">force</span> <span class="n">accel</span> <span class="n">runtime</span> <span class="ow">in</span> <span class="n">parallel</span><span class="p">:</span> <span class="mf">7.25576</span><span class="n">s</span>
+<span class="n">Tree</span> <span class="n">potential</span> <span class="n">runtime</span> <span class="ow">in</span> <span class="n">parallel</span><span class="p">:</span> <span class="mf">0.181393</span><span class="n">s</span>
+<span class="n">Brute</span> <span class="n">force</span> <span class="n">potential</span> <span class="n">runtime</span> <span class="ow">in</span> <span class="n">parallel</span><span class="p">:</span> <span class="mf">5.72611</span><span class="n">s</span>
+</pre></div>
+</div>
+<div class="section" id="what-if-i-want-to-evaluate-the-fields-at-different-points-than-where-the-particles-are">
+<h2>What if I want to evaluate the fields at different points than where the particles are?<a class="headerlink" href="#what-if-i-want-to-evaluate-the-fields-at-different-points-than-where-the-particles-are" title="Permalink to this headline">¶</a></h2>
+<p>We got you covered. The <code class="docutils literal notranslate"><span class="pre">Target</span></code> methods do exactly this: you specify separate sets of points for the particle positions and the field evaluation, and everything otherwise works exactly the same (including optional parallelization and choice of solver):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">pytreegrav</span> <span class="kn">import</span> <span class="n">AccelTarget</span><span class="p">,</span> <span class="n">PotentialTarget</span>
+
+<span class="c1"># generate a separate set of &quot;target&quot; positions where we want to know the potential and field</span>
+<span class="n">N_target</span> <span class="o">=</span> <span class="mi">10</span><span class="o">**</span><span class="mi">4</span>
+<span class="n">x_target</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">N_target</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">h_target</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="mf">0.01</span><span class="p">,</span><span class="n">N_target</span><span class="p">)</span> <span class="c1"># optional &quot;target&quot; softening: this sets a floor on the softening length of all forces/potentials computed</span>
+
+<span class="n">accel_tree</span> <span class="o">=</span> <span class="n">AccelTarget</span><span class="p">(</span><span class="n">x_target</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span> <span class="n">h_target</span><span class="o">=</span><span class="n">h_target</span><span class="p">,</span> <span class="n">h_source</span><span class="o">=</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;tree&#39;</span><span class="p">)</span> <span class="c1"># we provide the points/masses/softenings we generated before as the &quot;source&quot; particles</span>
+<span class="n">accel_bruteforce</span> <span class="o">=</span> <span class="n">AccelTarget</span><span class="p">(</span><span class="n">x_target</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h_source</span><span class="o">=</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;bruteforce&#39;</span><span class="p">)</span>
+
+<span class="n">acc_error</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">accel_tree</span><span class="o">-</span><span class="n">accel_bruteforce</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)))</span> <span class="c1"># RMS force error</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;RMS force error: &quot;</span><span class="p">,</span> <span class="n">acc_error</span><span class="p">)</span>
+
+<span class="n">phi_tree</span> <span class="o">=</span> <span class="n">PotentialTarget</span><span class="p">(</span><span class="n">x_target</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span> <span class="n">h_target</span><span class="o">=</span><span class="n">h_target</span><span class="p">,</span> <span class="n">h_source</span><span class="o">=</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;tree&#39;</span><span class="p">)</span> <span class="c1"># we provide the points/masses/softenings we generated before as the &quot;source&quot; particles</span>
+<span class="n">phi_bruteforce</span> <span class="o">=</span> <span class="n">PotentialTarget</span><span class="p">(</span><span class="n">x_target</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="n">m</span><span class="p">,</span><span class="n">h_target</span><span class="o">=</span><span class="n">h_target</span><span class="p">,</span> <span class="n">h_source</span><span class="o">=</span><span class="n">h</span><span class="p">,</span><span class="n">method</span><span class="o">=</span><span class="s1">&#39;bruteforce&#39;</span><span class="p">)</span>
+
+<span class="n">phi_error</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">phi_tree</span> <span class="o">-</span> <span class="n">phi_bruteforce</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;RMS potential error: &quot;</span><span class="p">,</span> <span class="n">phi_error</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">RMS</span> <span class="n">force</span> <span class="n">error</span><span class="p">:</span>  <span class="mf">0.006719983300560105</span>
+<span class="n">RMS</span> <span class="n">potential</span> <span class="n">error</span><span class="p">:</span>  <span class="mf">0.0003873676304955059</span>
+</pre></div>
+</div>
+</div>
+</div>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../index.html">pytreegrav</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Quickstart</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#what-if-i-want-to-evaluate-the-fields-at-different-points-than-where-the-particles-are">What if I want to evaluate the fields at different points than where the particles are?</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../frontend_API.html">API Documentation</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="installation.html" title="previous chapter">Installation</a></li>
+      <li>Next: <a href="../frontend_API.html" title="next chapter">API Documentation</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2021, Mike Grudic.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 3.2.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="../_sources/usage/quickstart.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -1,0 +1,771 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>pytreegrav package &#8212; pytreegrav 0.27 documentation</title>
+    <link rel="stylesheet" href="_static/alabaster.css" type="text/css" />
+    <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <script id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <div class="section" id="pytreegrav-package">
+<h1>pytreegrav package<a class="headerlink" href="#pytreegrav-package" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Permalink to this headline">¶</a></h2>
+</div>
+<div class="section" id="module-pytreegrav.bruteforce">
+<span id="pytreegrav-bruteforce-module"></span><h2>pytreegrav.bruteforce module<a class="headerlink" href="#module-pytreegrav.bruteforce" title="Permalink to this headline">¶</a></h2>
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.AccelTarget_bruteforce">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">AccelTarget_bruteforce</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">x_source</span></em>, <em class="sig-param"><span class="n">m_source</span></em>, <em class="sig-param"><span class="n">softening_source</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.AccelTarget_bruteforce" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational acceleration at a set of target positions, due to a set of source particles.</p>
+<p>Arguments:
+x_target – shape (N,3) array of positions where the field is to be evaluated
+softening_target – shape (N,) array of minimum softening lengths to be used
+x_source – shape (M,3) array of positions of gravitating particles
+m_source – shape (M,) array of particle masses
+softening_source – shape (M,) array of softening lengths</p>
+<p>Optional arguments:
+G – gravitational constant (default 1.0)</p>
+<p>Returns:
+shape (N,3) array of gravitational accelerations</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.AccelTarget_bruteforce_parallel">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">AccelTarget_bruteforce_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">x_source</span></em>, <em class="sig-param"><span class="n">m_source</span></em>, <em class="sig-param"><span class="n">softening_source</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.AccelTarget_bruteforce_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational acceleration at a set of target positions, due to a set of source particles.</p>
+<p>Arguments:
+x_target – shape (N,3) array of positions where the field is to be evaluated
+softening_target – shape (N,) array of minimum softening lengths to be used
+x_source – shape (M,3) array of positions of gravitating particles
+m_source – shape (M,) array of particle masses
+softening_source – shape (M,) array of softening lengths</p>
+<p>Optional arguments:
+G – gravitational constant (default 1.0)</p>
+<p>Returns:
+shape (N,3) array of gravitational accelerations</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.Accel_bruteforce">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">Accel_bruteforce</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.Accel_bruteforce" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the exact mutually-interacting gravitational accelerations of a set of particles.</p>
+<p>Arguments:
+x – shape (N,3) array of positions where the potential is to be evaluated
+m – shape (N,) array of particle masses
+softening – shape (N,) array of softening lengths</p>
+<p>Optional arguments:
+G – gravitational constant (default 1.0)</p>
+<p>Returns:
+shape (N,3) array of gravitational accelerations</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.Accel_bruteforce_parallel">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">Accel_bruteforce_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.Accel_bruteforce_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the exact mutually-interacting gravitational accelerations of a set of particles.</p>
+<p>Arguments:
+x – shape (N,3) array of positions where the potential is to be evaluated
+m – shape (N,) array of particle masses
+softening – shape (N,) array of softening lengths</p>
+<p>Optional arguments:
+G – gravitational constant (default 1.0)</p>
+<p>Returns:
+shape (N,3) array of gravitational accelerations</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.PotentialTarget_bruteforce">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">PotentialTarget_bruteforce</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">x_source</span></em>, <em class="sig-param"><span class="n">m_source</span></em>, <em class="sig-param"><span class="n">softening_source</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.PotentialTarget_bruteforce" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the exact gravitational potential due to a set of particles, at a set of positions that need not be the same as the particle positions.</p>
+<p>Arguments:
+x_target – shape (N,3) array of positions where the potential is to be evaluated
+softening_target – shape (N,) array of minimum softening lengths to be used
+x_source – shape (M,3) array of positions of gravitating particles
+m_source – shape (M,) array of particle masses
+softening_source – shape (M,) array of softening lengths</p>
+<p>Optional arguments:
+G – gravitational constant (default 0.7)</p>
+<p>Returns:
+shape (N,) array of potential values</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.PotentialTarget_bruteforce_parallel">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">PotentialTarget_bruteforce_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">x_source</span></em>, <em class="sig-param"><span class="n">m_source</span></em>, <em class="sig-param"><span class="n">softening_source</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.PotentialTarget_bruteforce_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the exact gravitational potential due to a set of particles, at a set of positions that need not be the same as the particle positions.</p>
+<p>Arguments:
+x_target – shape (N,3) array of positions where the potential is to be evaluated
+softening_target – shape (N,) array of minimum softening lengths to be used
+x_source – shape (M,3) array of positions of gravitating particles
+m_source – shape (M,) array of particle masses
+softening_source – shape (M,) array of softening lengths</p>
+<p>Optional arguments:
+G – gravitational constant (default 0.7)</p>
+<p>Returns:
+shape (N,) array of potential values</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.Potential_bruteforce">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">Potential_bruteforce</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.Potential_bruteforce" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the exact mutually-interacting gravitational potential for a set of particles with positions x and masses m, evaluated by brute force.</p>
+<p>Arguments:
+x – shape (N,3) array of particle positions
+m – shape (N,) array of particle masses
+softening – shape (N,) array containing kernel support radii for gravitational softening</p>
+<p>Optional arguments:
+G – gravitational constant (default 1.0)</p>
+<p>Returns:
+shape (N,) array containing potential values</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.bruteforce.Potential_bruteforce_parallel">
+<code class="sig-prename descclassname">pytreegrav.bruteforce.</code><code class="sig-name descname">Potential_bruteforce_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.bruteforce.Potential_bruteforce_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the exact mutually-interacting gravitational potential for a set of particles with positions x and masses m, evaluated by brute force.</p>
+<p>Arguments:
+x – shape (N,3) array of particle positions
+m – shape (N,) array of particle masses
+softening – shape (N,) array containing kernel support radii for gravitational softening</p>
+<p>Optional arguments:
+G – gravitational constant (default 1.0)</p>
+<p>Returns:
+shape (N,) array containing potential values</p>
+</dd></dl>
+
+</div>
+<div class="section" id="module-pytreegrav.dynamic_tree">
+<span id="pytreegrav-dynamic-tree-module"></span><h2>pytreegrav.dynamic_tree module<a class="headerlink" href="#module-pytreegrav.dynamic_tree" title="Permalink to this headline">¶</a></h2>
+<dl class="py function">
+<dt id="pytreegrav.dynamic_tree.ComputeMomentsDynamic">
+<code class="sig-prename descclassname">pytreegrav.dynamic_tree.</code><code class="sig-name descname">ComputeMomentsDynamic</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">no</span></em>, <em class="sig-param"><span class="n">children</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.dynamic_tree.ComputeMomentsDynamic" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.dynamic_tree.SetupTreewalk">
+<code class="sig-prename descclassname">pytreegrav.dynamic_tree.</code><code class="sig-name descname">SetupTreewalk</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">no</span></em>, <em class="sig-param"><span class="n">children</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.dynamic_tree.SetupTreewalk" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</div>
+<div class="section" id="module-pytreegrav.frontend">
+<span id="pytreegrav-frontend-module"></span><h2>pytreegrav.frontend module<a class="headerlink" href="#module-pytreegrav.frontend" title="Permalink to this headline">¶</a></h2>
+<dl class="py function">
+<dt id="pytreegrav.frontend.Accel">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">Accel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">method</span><span class="o">=</span><span class="default_value">'adaptive'</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.Accel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Gravitational acceleration calculation</p>
+<p>Returns the gravitational acceleration for a set of particles with positions x and masses m, at the positions of those particles, using either brute force or tree-based methods depending on the number of particles.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
+<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
+<li><p><strong>softening</strong> (<em>None</em><em> or </em><em>array_like</em><em>, </em><em>optional</em>) – shape (N,) array containing kernel support radii for gravitational softening - set to 0 by default</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – return the tree used for future use (default False)</p></li>
+<li><p><strong>method</strong> (<em>str</em><em>, </em><em>optional</em>) – Which summation method to use: ‘adaptive’, ‘tree’, or ‘bruteforce’ (default adaptive tries to pick the faster choice)</p></li>
+<li><p><strong>quadrupole</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to use quadrupole moments in tree summation (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>g</strong> – shape (N,3) array of acceleration vectors at the particle positions</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>array_like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.AccelTarget">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">AccelTarget</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos_target</span></em>, <em class="sig-param"><span class="n">pos_source</span></em>, <em class="sig-param"><span class="n">m_source</span></em>, <em class="sig-param"><span class="n">softening_target</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">softening_source</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">method</span><span class="o">=</span><span class="default_value">'adaptive'</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.AccelTarget" title="Permalink to this definition">¶</a></dt>
+<dd><p>Gravitational acceleration calculation for general N+M body case</p>
+<p>Returns the gravitational acceleration for a set of M particles with positions x_source and masses m_source, at the positions of a set of N particles that need not be the same.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos_target</strong> (<em>array_like</em>) – shape (N,3) array of target particle positions where you want to know the acceleration</p></li>
+<li><p><strong>pos_source</strong> (<em>array_like</em>) – shape (M,3) array of source particle positions (positions of particles sourcing the gravitational field)</p></li>
+<li><p><strong>m_source</strong> (<em>array_like</em>) – shape (M,) array of source particle masses</p></li>
+<li><p><strong>softening_target</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of target particle softening radii</p></li>
+<li><p><strong>softening_source</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (M,) array of source particle radii</p></li>
+<li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – return the tree used for future use (default False)</p></li>
+<li><p><strong>method</strong> (<em>str</em><em>, </em><em>optional</em>) – Which summation method to use: ‘adaptive’, ‘tree’, or ‘bruteforce’ (default adaptive tries to pick the faster choice)</p></li>
+<li><p><strong>quadrupole</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to use quadrupole moments in tree summation (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>phi</strong> – shape (N,3) array of accelerations at the target positions</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>array_like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.ConstructTree">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">ConstructTree</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">vel</span><span class="o">=</span><span class="default_value">None</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.ConstructTree" title="Permalink to this definition">¶</a></dt>
+<dd><p>Builds a tree containing particle data, for subsequent potential/field evaluation</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
+<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>softening</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of particle softening lengths</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>tree</strong> – Octree instance built from particle data</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>octree</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.DensityCorrFunc">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">DensityCorrFunc</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">rbins</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.DensityCorrFunc" title="Permalink to this definition">¶</a></dt>
+<dd><p>Computes the average amount of mass in radial bin [r,r+dr] around a point, provided a set of radial bins.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
+<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>rbins</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – 1D array of radial bin edges - if None will use heuristics to determine sensible bins. Otherwise MUST BE LOGARITHMICALLY SPACED (default None)</p></li>
+<li><p><strong>max_bin_size_ratio</strong> (<em>float</em><em>, </em><em>optional</em>) – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 100)</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0)</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the correlation function computation over all available cores. (default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – if True will return the generated or used tree for future use (default False)</p></li>
+<li><p><strong>boxsize</strong> (<em>float</em><em>, </em><em>optional</em>) – finite periodic box size, if periodic boundary conditions are to be used (default 0)</p></li>
+<li><p><strong>weighted_binning</strong> (<em>bool</em><em>, </em><em>optional</em>) – (experimental) if True will distribute mass among radial bings with a weighted kernel (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>rbins</strong> (<em>array_like</em>) – array containing radial bin edges</p></li>
+<li><p><strong>mbins</strong> (<em>array_like</em>) – array containing mean mass in radial bins, averaged over all points</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.Potential">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">Potential</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">method</span><span class="o">=</span><span class="default_value">'adaptive'</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.Potential" title="Permalink to this definition">¶</a></dt>
+<dd><p>Gravitational potential calculation</p>
+<p>Returns the gravitational potential for a set of particles with positions x and masses m, at the positions of those particles, using either brute force or tree-based methods depending on the number of particles.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
+<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
+<li><p><strong>softening</strong> (<em>None</em><em> or </em><em>array_like</em><em>, </em><em>optional</em>) – shape (N,) array containing kernel support radii for gravitational softening - set to 0 by default</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – return the tree used for future use (default False)</p></li>
+<li><p><strong>method</strong> (<em>str</em><em>, </em><em>optional</em>) – Which summation method to use: ‘adaptive’, ‘tree’, or ‘bruteforce’ (default adaptive tries to pick the faster choice)</p></li>
+<li><p><strong>quadrupole</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to use quadrupole moments in tree summation (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>phi</strong> – shape (N,) array of potentials at the particle positions</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>array_like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.PotentialTarget">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">PotentialTarget</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos_target</span></em>, <em class="sig-param"><span class="n">pos_source</span></em>, <em class="sig-param"><span class="n">m_source</span></em>, <em class="sig-param"><span class="n">softening_target</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">softening_source</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">method</span><span class="o">=</span><span class="default_value">'adaptive'</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.PotentialTarget" title="Permalink to this definition">¶</a></dt>
+<dd><p>Gravitational potential calculation for general N+M body case</p>
+<p>Returns the gravitational potential for a set of M particles with positions x_source and masses m_source, at the positions of a set of N particles that need not be the same.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos_target</strong> (<em>array_like</em>) – shape (N,3) array of target particle positions where you want to know the potential</p></li>
+<li><p><strong>pos_source</strong> (<em>array_like</em>) – shape (M,3) array of source particle positions (positions of particles sourcing the gravitational field)</p></li>
+<li><p><strong>m_source</strong> (<em>array_like</em>) – shape (M,) array of source particle masses</p></li>
+<li><p><strong>softening_target</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of target particle softening radii</p></li>
+<li><p><strong>softening_source</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (M,) array of source particle radii</p></li>
+<li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – return the tree used for future use (default False)</p></li>
+<li><p><strong>method</strong> (<em>str</em><em>, </em><em>optional</em>) – Which summation method to use: ‘adaptive’, ‘tree’, or ‘bruteforce’ (default adaptive tries to pick the faster choice)</p></li>
+<li><p><strong>quadrupole</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to use quadrupole moments in tree summation (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>phi</strong> – shape (N,) array of potentials at the target positions</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>array_like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.VelocityCorrFunc">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">VelocityCorrFunc</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">v</span></em>, <em class="sig-param"><span class="n">rbins</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.VelocityCorrFunc" title="Permalink to this definition">¶</a></dt>
+<dd><p>Computes the weighted average product v(x).v(x+r), for a vector field v, in radial bins</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
+<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>v</strong> (<em>array_like</em>) – shape (N,3) of vector quantity (e.g. velocity, magnetic field, etc)</p></li>
+<li><p><strong>rbins</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – 1D array of radial bin edges - if None will use heuristics to determine sensible bins. Otherwise MUST BE LOGARITHMICALLY SPACED (default None)</p></li>
+<li><p><strong>max_bin_size_ratio</strong> (<em>float</em><em>, </em><em>optional</em>) – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 100)</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0)</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the correlation function computation over all available cores. (default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – if True will return the generated or used tree for future use (default False)</p></li>
+<li><p><strong>boxsize</strong> (<em>float</em><em>, </em><em>optional</em>) – finite periodic box size, if periodic boundary conditions are to be used (default 0)</p></li>
+<li><p><strong>weighted_binning</strong> (<em>bool</em><em>, </em><em>optional</em>) – (experimental) if True will distribute mass among radial bings with a weighted kernel (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>rbins</strong> (<em>array_like</em>) – array containing radial bin edges</p></li>
+<li><p><strong>corr</strong> (<em>array_like</em>) – array containing correlation function values in radial bins</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.VelocityStructFunc">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">VelocityStructFunc</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">v</span></em>, <em class="sig-param"><span class="n">rbins</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.VelocityStructFunc" title="Permalink to this definition">¶</a></dt>
+<dd><p>Computes the structure function for a vector field: the average value of <a href="#id1"><span class="problematic" id="id2">|</span></a>v(x)-v(x+r)|^2, in radial bins for r</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
+<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>v</strong> (<em>array_like</em>) – shape (N,3) of vector quantity (e.g. velocity, magnetic field, etc)</p></li>
+<li><p><strong>rbins</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – 1D array of radial bin edges - if None will use heuristics to determine sensible bins. Otherwise MUST BE LOGARITHMICALLY SPACED (default None)</p></li>
+<li><p><strong>max_bin_size_ratio</strong> (<em>float</em><em>, </em><em>optional</em>) – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 100)</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 1.0)</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the correlation function computation over all available cores. (default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – if True will return the generated or used tree for future use (default False)</p></li>
+<li><p><strong>boxsize</strong> (<em>float</em><em>, </em><em>optional</em>) – finite periodic box size, if periodic boundary conditions are to be used (default 0)</p></li>
+<li><p><strong>weighted_binning</strong> (<em>bool</em><em>, </em><em>optional</em>) – (experimental) if True will distribute mass among radial bings with a weighted kernel (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>rbins</strong> (<em>array_like</em>) – array containing radial bin edges</p></li>
+<li><p><strong>Sv</strong> (<em>array_like</em>) – array containing structure function values</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.frontend.valueTestMethod">
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">valueTestMethod</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">method</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.frontend.valueTestMethod" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</div>
+<div class="section" id="module-pytreegrav.kernel">
+<span id="pytreegrav-kernel-module"></span><h2>pytreegrav.kernel module<a class="headerlink" href="#module-pytreegrav.kernel" title="Permalink to this headline">¶</a></h2>
+<dl class="py function">
+<dt id="pytreegrav.kernel.ForceKernel">
+<code class="sig-prename descclassname">pytreegrav.kernel.</code><code class="sig-name descname">ForceKernel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">r</span></em>, <em class="sig-param"><span class="n">h</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.kernel.ForceKernel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the quantity equivalent to (fraction of mass enclosed)/ r^3 for a cubic-spline mass distribution of compact support radius h. Used to calculate the softened gravitational force.</p>
+<p>Arguments:
+r - radius
+h - softening</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.kernel.PotentialKernel">
+<code class="sig-prename descclassname">pytreegrav.kernel.</code><code class="sig-name descname">PotentialKernel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">r</span></em>, <em class="sig-param"><span class="n">h</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.kernel.PotentialKernel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the equivalent of -1/r for a cubic-spline mass distribution of compact support radius h. Used to calculate the softened gravitational potential.</p>
+<p>Arguments:
+r - radius
+h - softening</p>
+</dd></dl>
+
+</div>
+<div class="section" id="module-pytreegrav.octree">
+<span id="pytreegrav-octree-module"></span><h2>pytreegrav.octree module<a class="headerlink" href="#module-pytreegrav.octree" title="Permalink to this headline">¶</a></h2>
+<dl class="py function">
+<dt id="pytreegrav.octree.ComputeMoments">
+<code class="sig-prename descclassname">pytreegrav.octree.</code><code class="sig-name descname">ComputeMoments</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">no</span></em>, <em class="sig-param"><span class="n">children</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.octree.ComputeMoments" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.octree.SetupTreewalk">
+<code class="sig-prename descclassname">pytreegrav.octree.</code><code class="sig-name descname">SetupTreewalk</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">no</span></em>, <em class="sig-param"><span class="n">children</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.octree.SetupTreewalk" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</div>
+<div class="section" id="module-pytreegrav.treewalk">
+<span id="pytreegrav-treewalk-module"></span><h2>pytreegrav.treewalk module<a class="headerlink" href="#module-pytreegrav.treewalk" title="Permalink to this headline">¶</a></h2>
+<dl class="py function">
+<dt id="pytreegrav.treewalk.AccelTarget_tree">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">AccelTarget_tree</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.AccelTarget_tree" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational acceleration at the specified points, given a tree containing the mass distribution
+Arguments:
+pos_target – shape (N,3) array of positions at which to evaluate the field
+softening_target – shape (N,) array of <em>minimum</em> softening lengths to be used in all accel computations
+tree – Octree instance containing the positions, masses, and softenings of the source particles
+Optional arguments:
+G – gravitational constant (default 1.0)
+theta – accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+Returns:
+shape (N,3) array of acceleration values at each point in pos_target</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.AccelTarget_tree_parallel">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">AccelTarget_tree_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.AccelTarget_tree_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational acceleration at the specified points, given a tree containing the mass distribution
+Arguments:
+pos_target – shape (N,3) array of positions at which to evaluate the field
+softening_target – shape (N,) array of <em>minimum</em> softening lengths to be used in all accel computations
+tree – Octree instance containing the positions, masses, and softenings of the source particles
+Optional arguments:
+G – gravitational constant (default 1.0)
+theta – accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+Returns:
+shape (N,3) array of acceleration values at each point in pos_target</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.AccelWalk">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">AccelWalk</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">no</span><span class="o">=</span><span class="default_value">- 1</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.AccelWalk" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational acceleration field at position x by performing the Barnes-Hut treewalk using the provided octree instance
+Arguments:
+pos - (3,) array containing position of interest
+tree - octree instance storing the tree structure
+Keyword arguments:
+softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.AccelWalk_quad">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">AccelWalk_quad</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">no</span><span class="o">=</span><span class="default_value">- 1</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.AccelWalk_quad" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational acceleration field at position x by performing the Barnes-Hut treewalk using the provided octree instance. Uses the quadrupole expansion.
+Arguments:
+pos - (3,) array containing position of interest
+tree - octree instance storing the tree structure
+Keyword arguments:
+softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.DensityCorrFunc_tree">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">DensityCorrFunc_tree</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.DensityCorrFunc_tree" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the average mass in radial bins surrounding a point</p>
+<p>Arguments:
+pos – shape (N,3) array of particle positions
+tree – Octree instance containing the positions, masses, and softenings of the source particles</p>
+<p>Optional arguments:
+rbins – 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+max_bin_size_ratio – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width</p>
+<p>Returns:
+mbins – arrays containing total mass in each bin</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.DensityCorrFunc_tree_parallel">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">DensityCorrFunc_tree_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.DensityCorrFunc_tree_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the average mass in radial bins surrounding a point</p>
+<p>Arguments:
+pos – shape (N,3) array of particle positions
+tree – Octree instance containing the positions, masses, and softenings of the source particles</p>
+<p>Optional arguments:
+rbins – 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+max_bin_size_ratio – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width</p>
+<p>Returns:
+mbins – arrays containing total mass in each bin</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.DensityCorrWalk">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">DensityCorrWalk</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">no</span><span class="o">=</span><span class="default_value">- 1</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.DensityCorrWalk" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance</p>
+<p>Arguments:
+pos - (3,) array containing position of interest
+tree - octree object storing the tree structure</p>
+<p>Keyword arguments:
+softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.NearestImage">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">NearestImage</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">x</span></em>, <em class="sig-param"><span class="n">boxsize</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.NearestImage" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.PotentialTarget_tree">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">PotentialTarget_tree</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.PotentialTarget_tree" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational potential at the specified points, given a tree containing the mass distribution
+Arguments:
+pos_target – shape (N,3) array of positions at which to evaluate the potential
+softening_target – shape (N,) array of <em>minimum</em> softening lengths to be used in all potential computations
+tree – Octree instance containing the positions, masses, and softenings of the source particles
+Optional arguments:
+G – gravitational constant (default 1.0)
+theta – accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+Returns:
+shape (N,) array of potential values at each point in pos</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.PotentialTarget_tree_parallel">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">PotentialTarget_tree_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos_target</span></em>, <em class="sig-param"><span class="n">softening_target</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">G</span><span class="o">=</span><span class="default_value">1.0</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.PotentialTarget_tree_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational potential at the specified points, given a tree containing the mass distribution
+Arguments:
+pos_target – shape (N,3) array of positions at which to evaluate the potential
+softening_target – shape (N,) array of <em>minimum</em> softening lengths to be used in all potential computations
+tree – Octree instance containing the positions, masses, and softenings of the source particles
+Optional arguments:
+G – gravitational constant (default 1.0)
+theta – accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+Returns:
+shape (N,) array of potential values at each point in pos</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.PotentialWalk">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">PotentialWalk</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">no</span><span class="o">=</span><span class="default_value">- 1</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.PotentialWalk" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance
+Arguments:
+pos - (3,) array containing position of interest
+tree - octree object storing the tree structure
+Keyword arguments:
+softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.PotentialWalk_quad">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">PotentialWalk_quad</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">no</span><span class="o">=</span><span class="default_value">- 1</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.PotentialWalk_quad" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance. Uses the quadrupole expansion.
+Arguments:
+pos - (3,) array containing position of interest
+tree - octree object storing the tree structure
+Keyword arguments:
+softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.VelocityCorrFunc_tree">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">VelocityCorrFunc_tree</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">vel</span></em>, <em class="sig-param"><span class="n">weight</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.VelocityCorrFunc_tree" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the average mass in radial bins surrounding a point</p>
+<p>Arguments:
+pos – shape (N,3) array of particle positions
+tree – Octree instance containing the positions, masses, and softenings of the source particles</p>
+<p>Optional arguments:
+rbins – 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+max_bin_size_ratio – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)</p>
+<p>Returns:
+mbins – arrays containing total mass in each bin</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.VelocityCorrFunc_tree_parallel">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">VelocityCorrFunc_tree_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">vel</span></em>, <em class="sig-param"><span class="n">weight</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.VelocityCorrFunc_tree_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the average mass in radial bins surrounding a point</p>
+<p>Arguments:
+pos – shape (N,3) array of particle positions
+tree – Octree instance containing the positions, masses, and softenings of the source particles</p>
+<p>Optional arguments:
+rbins – 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+max_bin_size_ratio – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)</p>
+<p>Returns:
+mbins – arrays containing total mass in each bin</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.VelocityCorrWalk">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">VelocityCorrWalk</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">vel</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">no</span><span class="o">=</span><span class="default_value">- 1</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.VelocityCorrWalk" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance</p>
+<p>Arguments:
+pos - (3,) array containing position of interest
+vel - (3,) array containing velocity of point of interest
+tree - octree object storing the tree structure</p>
+<p>Keyword arguments:
+softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.VelocityStructFunc_tree">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">VelocityStructFunc_tree</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">vel</span></em>, <em class="sig-param"><span class="n">weight</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.VelocityStructFunc_tree" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the average mass in radial bins surrounding a point</p>
+<p>Arguments:
+pos – shape (N,3) array of particle positions
+tree – Octree instance containing the positions, masses, and softenings of the source particles</p>
+<p>Optional arguments:
+rbins – 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+max_bin_size_ratio – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)</p>
+<p>Returns:
+mbins – arrays containing total mass in each bin</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.VelocityStructFunc_tree_parallel">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">VelocityStructFunc_tree_parallel</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">vel</span></em>, <em class="sig-param"><span class="n">weight</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.VelocityStructFunc_tree_parallel" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the average mass in radial bins surrounding a point</p>
+<p>Arguments:
+pos – shape (N,3) array of particle positions
+tree – Octree instance containing the positions, masses, and softenings of the source particles</p>
+<p>Optional arguments:
+rbins – 1D array of radial bin edges - if None will use heuristics to determine sensible bins
+max_bin_size_ratio – controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)</p>
+<p>Returns:
+mbins – arrays containing total mass in each bin</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.VelocityStructWalk">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">VelocityStructWalk</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">vel</span></em>, <em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">max_bin_size_ratio</span><span class="o">=</span><span class="default_value">100</span></em>, <em class="sig-param"><span class="n">theta</span><span class="o">=</span><span class="default_value">0.7</span></em>, <em class="sig-param"><span class="n">no</span><span class="o">=</span><span class="default_value">- 1</span></em>, <em class="sig-param"><span class="n">boxsize</span><span class="o">=</span><span class="default_value">0</span></em>, <em class="sig-param"><span class="n">weighted_binning</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.VelocityStructWalk" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance</p>
+<p>Arguments:
+pos - (3,) array containing position of interest
+vel - (3,) array containing velocity of point of interest
+tree - octree object storing the tree structure</p>
+<p>Keyword arguments:
+softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
+no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)</p>
+</dd></dl>
+
+<dl class="py function">
+<dt id="pytreegrav.treewalk.do_weighted_binning">
+<code class="sig-prename descclassname">pytreegrav.treewalk.</code><code class="sig-name descname">do_weighted_binning</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">tree</span></em>, <em class="sig-param"><span class="n">no</span></em>, <em class="sig-param"><span class="n">rbins</span></em>, <em class="sig-param"><span class="n">mbin</span></em>, <em class="sig-param"><span class="n">r</span></em>, <em class="sig-param"><span class="n">r_idx</span></em>, <em class="sig-param"><span class="n">quantity</span></em><span class="sig-paren">)</span><a class="headerlink" href="#pytreegrav.treewalk.do_weighted_binning" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</div>
+<div class="section" id="module-pytreegrav">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-pytreegrav" title="Permalink to this headline">¶</a></h2>
+</div>
+</div>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">pytreegrav</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="usage/installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="usage/quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="frontend_API.html">API Documentation</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" />
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2021, Mike Grudic.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 3.2.1</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="_sources/pytreegrav.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
