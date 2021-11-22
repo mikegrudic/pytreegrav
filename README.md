@@ -1,4 +1,4 @@
-[![PyPI](https://img.shields.io/pypi/v/pytreegrav)](https://pypi.org/project/pytreegrav)
+[![PyPI](https://img.shields.io/pypi/v/pytreegrav)](https://pypi.org/project/pytreegrav)[![Documentation Status](https://readthedocs.org/projects/pytreegrav/badge/?version=latest)](https://pytreegrav.readthedocs.io/en/latest/?badge=latest)
 
 # Introduction
 pytreegrav is a package for computing the gravitational potential and/or field of a set of particles. It includes methods for brute-force direction summation and for the fast, approximate Barnes-Hut treecode method. For the Barnes-Hut method we implement an oct-tree as a numba jitclass to achieve much higher peformance than the equivalent pure Python implementation, without writing a single line of C or Cython. Full documentation is available [here](http://pytreegrav.readthedocs.io).
