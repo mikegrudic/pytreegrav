@@ -28,7 +28,11 @@ def ConstructTree(pos,m,softening=None,quadrupole=False,vel=None):
     m: array_like
         shape (N,) array of particle masses
     softening: array_like or None, optional
-        shape (N,) array of particle softening lengths
+        shape (N,) array of particle softening lengths - these give the radius of compact support of the M4 cubic spline mass distribution of each particle
+    quadrupole: bool, optional
+        Whether to store quadrupole moments (default False)
+    vel: bool, optional
+        Whether to store node velocities in the tree (default False)
 
     Returns
     -------
@@ -58,7 +62,7 @@ def Potential(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=Fal
     G: float, optional
         gravitational constant (default 1.0)
     softening: None or array_like, optional
-        shape (N,) array containing kernel support radii for gravitational softening - set to 0 by default
+        shape (N,) array containing kernel support radii for gravitational softening -  - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default
     theta: float, optional
         cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
     parallel: bool, optional
@@ -131,9 +135,9 @@ def PotentialTarget(pos_target, pos_source, m_source, softening_target=None, sof
     m_source: array_like
         shape (M,) array of source particle masses
     softening_target: array_like or None, optional
-        shape (N,) array of target particle softening radii
+        shape (N,) array of target particle softening radii - these give the radius of compact support of the M4 cubic spline mass distribution
     softening_source: array_like or None, optional
-        shape (M,) array of source particle radii
+        shape (M,) array of source particle radii  - these give the radius of compact support of the M4 cubic spline mass distribution
     G: float, optional
         gravitational constant (default 1.0)
     theta: float, optional
@@ -206,7 +210,7 @@ def Accel(pos, m, softening=None, G=1., theta=.7, tree=None, return_tree=False,p
     G: float, optional
         gravitational constant (default 1.0)
     softening: None or array_like, optional
-        shape (N,) array containing kernel support radii for gravitational softening - set to 0 by default
+        shape (N,) array containing kernel support radii for gravitational softening - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default
     theta: float, optional
         cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
     parallel: bool, optional
@@ -279,9 +283,9 @@ def AccelTarget(pos_target, pos_source, m_source, softening_target=None, softeni
     m_source: array_like
         shape (M,) array of source particle masses
     softening_target: array_like or None, optional
-        shape (N,) array of target particle softening radii
+        shape (N,) array of target particle softening radii - these give the radius of compact support of the M4 cubic spline mass distribution
     softening_source: array_like or None, optional
-        shape (M,) array of source particle radii
+        shape (M,) array of source particle radii - these give the radius of compact support of the M4 cubic spline mass distribution
     G: float, optional
         gravitational constant (default 1.0)
     theta: float, optional
