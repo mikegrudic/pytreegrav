@@ -5,6 +5,7 @@
 
 Welcome to pytreegrav's documentation!
 ======================================
+pytreegrav is a package for computing the gravitational potential and/or field of a set of particles. It includes methods for brute-force direction summation and for the fast, approximate Barnes-Hut treecode method. For the Barnes-Hut method we implement an oct-tree as a numba jitclass to achieve much higher peformance than the equivalent pure Python implementation, without writing a single line of C or Cython.
 
 .. toctree::
    :maxdepth: 2
