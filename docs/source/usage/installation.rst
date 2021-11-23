@@ -8,7 +8,7 @@ The below will help you quickly install pytreegrav.
 Requirements
 ------------
 
-You will need a working Python installation; we recommend installing `Anaconda <https://www.anaconda.com/download/>`_ Python version 3.x.
+You will need a working Python 3.x installation; we recommend installing `Anaconda <https://www.anaconda.com/download/>`_ Python version 3.x.
 You will also need to install the following packages:
 
     * numpy
