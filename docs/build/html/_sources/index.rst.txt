@@ -15,6 +15,7 @@ pytreegrav is a package for computing the gravitational potential and/or field o
    usage/quickstart
    Nbody_simulation
    frontend_API
+   community
 
 Indices and tables
 ==================

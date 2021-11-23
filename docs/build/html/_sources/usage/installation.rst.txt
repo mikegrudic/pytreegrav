@@ -69,3 +69,13 @@ and by importing the pytreegrav Python frontend in Python
 
     import pytreegrav
 
+Testing
+-------
+
+To test that the tree solver is working correctly, run
+
+.. code-block:: bash
+
+    pytest
+
+from the root directory of the package. This will run a basic test problem comparing the acceleration and potential from the tree and brute force solvers respectively, and check that the answers are within the expected tolerance.

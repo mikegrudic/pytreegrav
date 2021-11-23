@@ -41,10 +41,13 @@
 <li class="toctree-l2"><a class="reference internal" href="#requirements">Requirements</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#installing-the-latest-stable-release">Installing the latest stable release</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#install-from-source">Install from source</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#testing">Testing</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../Nbody_simulation.html">Example: N-body simulation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../frontend_API.html">API Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../community.html">Feedback and Contributions</a></li>
 </ul>
 
         </div>
@@ -123,6 +126,14 @@ executable built by the installation</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">pytreegrav</span>
 </pre></div>
 </div>
+</div>
+<div class="section" id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Permalink to this headline"></a></h2>
+<p>To test that the tree solver is working correctly, run</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pytest
+</pre></div>
+</div>
+<p>from the root directory of the package. This will run a basic test problem comparing the acceleration and potential from the tree and brute force solvers respectively, and check that the answers are within the expected tolerance.</p>
 </div>
 </div>
 
