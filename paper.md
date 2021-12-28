@@ -8,13 +8,15 @@ tags:
 authors:
   - name: Michael Y. Grudić
     orcid: 0000-0002-1655-5604
-    affiliation: 1
+    affiliation: 1,2
   - name: Alexander B. Gurvich
     orcid: 0000-0002-6145-3674
-    affiliation: 1
+    affiliation: 2
 affiliations:
- - name: Department of Physics & Astronomy and CIERA, Northwestern University, 1800 Sherman Ave, Evanston, IL 60201, USA
+ - name: Carnegie Observatories, 813 Santa Barbara St, Pasadena, CA 91101, USA
    index: 1
+ - name: Department of Physics & Astronomy and CIERA, Northwestern University, 1800 Sherman Ave, Evanston, IL 60201, USA
+   index: 2
 date: 9 June 2021
 bibliography: paper.bib
 ---
