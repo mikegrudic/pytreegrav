@@ -8,7 +8,7 @@ tags:
 authors:
   - name: Michael Y. Grudić
     orcid: 0000-0002-1655-5604
-    affiliation: 1,2
+    affiliation: "1,2"
   - name: Alexander B. Gurvich
     orcid: 0000-0002-6145-3674
     affiliation: 2
