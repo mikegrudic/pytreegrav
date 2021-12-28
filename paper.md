@@ -13,9 +13,9 @@ authors:
     orcid: 0000-0002-6145-3674
     affiliation: 2
 affiliations:
- - name: Carnegie Observatories, 813 Santa Barbara St, Pasadena, CA 91101, USA
+ - name: NASA Hubble Fellow, Carnegie Observatories
    index: 1
- - name: Department of Physics & Astronomy and CIERA, Northwestern University, 1800 Sherman Ave, Evanston, IL 60201, USA
+ - name: Department of Physics & Astronomy and CIERA, Northwestern University
    index: 2
 date: 9 June 2021
 bibliography: paper.bib
