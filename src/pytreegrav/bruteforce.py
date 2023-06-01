@@ -28,7 +28,7 @@ def PotentialTarget_bruteforce(x_target, softening_target, x_source, m_source, s
             r = sqrt(dx[0]*dx[0] + dx[1]*dx[1] + dx[2]*dx[2])
 
             h = max(softening_source[j], softening_target[i])
-            if r < softening_source[j]:
+            if r < h:
                 potential[i] += m_source[j] * PotentialKernel(r, h)
             else:
                 if r>0: potential[i] -= m_source[j]/r
