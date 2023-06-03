@@ -1,2 +1,2 @@
-numba<0.54
-numpy<1.21
+numba>=0.54
+numpy>=1.21
