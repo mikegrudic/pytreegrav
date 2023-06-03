@@ -38,7 +38,6 @@ class Octree(object):
         self.HasQuads = quadrupole
         children = self.BuildTree(points, masses, softening) # first provisional treebuild to get the ordering right
         SetupTreewalk(self,self.NumParticles,children) # set up the order of the treewalk
-        ComputeMoments(self,self.NumParticles,children) # compute centers of mass, etc.         
         self.GetWalkIndices() # get the Morton ordering of the points
  
         if morton_order: # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
@@ -116,9 +115,6 @@ class Octree(object):
                     children[no,octant] = i
                     no = -1        
         return children
-
-    def ReorderTree(self):
-        no = self.NumParticles
         
     def GetWalkIndices(self): # gets the ordering of the particles in the treewalk
         index = 0
