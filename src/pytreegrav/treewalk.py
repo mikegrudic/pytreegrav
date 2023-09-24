@@ -759,7 +759,7 @@ VelocityStructFunc_tree = njit(VelocityStructFunc_tree, fastmath=True)
 
 
 @njit(fastmath=True)
-def ColumnDensityWalk(pos, rays, tree, no=-1):
+def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
     """Returns the integrated column density to infinity from pos, in the directions given by the rays argument
 
     Arguments:
@@ -847,6 +847,80 @@ def ColumnDensityWalk(pos, rays, tree, no=-1):
     return columns
 
 
+@njit(fastmath=True)
+def ColumnDensityWalk(pos, ray, tree, no=-1):
+    """Returns the integrated column density to infinity from pos, in the directions given by the rays argument
+
+    Arguments:
+    pos - (3,) array containing position of interest
+    ray - (3,) array with the unit vector of the ray
+    tree - octree object storing the tree structure
+
+    Returns:
+    columns - (N_rays,) array of column densities along directions given by rays
+
+    Keyword arguments:
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    """
+    if no < 0:
+        no = tree.NumParticles  # we default to the top-level node index
+
+    column = 0
+    dx = np.empty(3, dtype=np.float64)
+    z_ray = 0  # perpendicular distances of elements to nearest point on rays
+    fac_density = 3 / (4 * np.pi)
+
+    while no > -1:
+        r2 = 0
+        for k in range(3):
+            dx[k] = tree.Coordinates[no, k] - pos[k]
+            r2 += dx[k] * dx[k]
+        r = sqrt(r2)
+        #        for i in range(N_rays):
+        z_ray = ray[0] * dx[0] + ray[1] * dx[1] + ray[2] * dx[2]
+        #        print(f"r={r}, z_ray={z_ray}")
+        h_no = tree.Softenings[no]
+        h_no_inv = 1.0 / h_no
+        h = h_no  # max(h_no,softening)
+
+        if no < tree.NumParticles:  # if we're looking at a leaf/particle
+            # add the particle's column if it's in the right direction
+            fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv
+            # assumes uniform sphere geometry
+            #            for i in range(N_rays):
+            r_proj = sqrt(r2 - z_ray * z_ray)
+            q = r_proj * h_no_inv
+            if r_proj < h_no:
+                if (
+                    r > h_no
+                ):  # not overlapping the target point - integrate the whole cell
+                    if z_ray > 0:
+                        column += fac * 2 * sqrt(1 - q * q)
+                else:  # overlapping, so need to integrate only a portion of the cell - this case includes the self-shielding if the point is in the tree!
+                    dz = z_ray * h_no_inv
+                    column += fac * (dz + sqrt(1 - q * q))
+            no = tree.NextBranch[no]
+
+        else:  # we have a node, need to check if it intersects a ray
+            node_intersects_ray = False
+            R_eff = tree.Sizes[no] * 0.8660254037844386 + tree.Deltas[no]
+            # effective search radius from center of mass
+            if r < h + R_eff:
+                # if node contains the origin then it must intersect all rays
+                node_intersects_ray = True
+            elif (z_ray > 0) and (
+                (r2 - z_ray * z_ray)
+                < (tree.Softenings[no] + R_eff) * (tree.Softenings[no] + R_eff)
+            ):  # if perpendicular distance is less than node effective size
+                node_intersects_ray = True
+
+            if node_intersects_ray:
+                no = tree.FirstSubnode[no]  # open the node
+            else:  # no intersection with any way, so go to next node
+                no = tree.NextBranch[no]
+    return column
+
+
 def ColumnDensity_tree(pos_target, rays, tree):
     """Returns the gravitational potential at the specified points, given a
     tree containing the mass distribution
@@ -857,8 +931,10 @@ def ColumnDensity_tree(pos_target, rays, tree):
     the source particles
     """
     result = empty((pos_target.shape[0], rays.shape[0]))
-    for i in prange(pos_target.shape[0]):
-        result[i] = ColumnDensityWalk(pos_target[i], rays, tree)
+    for i in range(rays.shape[0]):
+        # outer loop over rays - empirically better access pattern
+        for j in prange(pos_target.shape[0]):
+            result[j, i] = ColumnDensityWalk(pos_target[j], rays[i], tree)
     return result
 
 
