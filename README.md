@@ -162,11 +162,11 @@ print("RMS potential error: ", phi_error)
 
 # Ray-tracing
 
-pytreegrav's octree implementation can be used for efficient tree-based searches for ray-tracing of unstructured data. Currently implemented is the method ``ColumnDensity``, which calculates the integral of the density field to infinity along a grid of rays (defaulting to 6 rays). For example:
+pytreegrav's octree implementation can be used for efficient tree-based searches for ray-tracing of unstructured data. Currently implemented is the method ``ColumnDensity``, which calculates the integral of the density field to infinity along a grid of rays originating at each particle (defaulting to 6 rays). For example:
 
 ```python
-columns = ColumnDensity(x, m, h, parallel=True) # column densities along 6 rays oriented along cartesian axes
-columns_10 = ColumnDensity(x, m, h, rays=10, parallel=True) # column densities along 10 random rays
+columns = ColumnDensity(x, m, h, parallel=True) # shape (N,6) array of column densities along 6 rays oriented along cartesian axes
+columns_10 = ColumnDensity(x, m, h, rays=10, parallel=True) # shape (N, 10) array column densities along 10 random rays
 κ = 0.02 # example opacity, in code units
 σ = m * κ # total cross-section in each particle is product of mass and opacity
 𝛕 = ColumnDensity(x, σ, h, parallel=True) # can pass cross-section instead of mass to get optical depth
