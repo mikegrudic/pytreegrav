@@ -16,7 +16,7 @@
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="Feedback and Contributions" href="community.html" />
+    <link rel="next" title="Feedback, Support, and Contributions" href="community.html" />
     <link rel="prev" title="Example: N-body simulation" href="Nbody_simulation.html" /> 
 </head>
 
@@ -41,7 +41,7 @@
 <li class="toctree-l1"><a class="reference internal" href="usage/quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="Nbody_simulation.html">Example: N-body simulation</a></li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">API Documentation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="community.html">Feedback and Contributions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="community.html">Feedback, Support, and Contributions</a></li>
 </ul>
 
         </div>
@@ -81,7 +81,7 @@
 <li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
 <li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
 <li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
-<li><p><strong>softening</strong> (<em>None</em><em> or </em><em>array_like</em><em>, </em><em>optional</em>) – shape (N,) array containing kernel support radii for gravitational softening - set to 0 by default</p></li>
+<li><p><strong>softening</strong> (<em>None</em><em> or </em><em>array_like</em><em>, </em><em>optional</em>) – shape (N,) array containing kernel support radii for gravitational softening - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default</p></li>
 <li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
 <li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
 <li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
@@ -110,8 +110,8 @@
 <li><p><strong>pos_target</strong> (<em>array_like</em>) – shape (N,3) array of target particle positions where you want to know the acceleration</p></li>
 <li><p><strong>pos_source</strong> (<em>array_like</em>) – shape (M,3) array of source particle positions (positions of particles sourcing the gravitational field)</p></li>
 <li><p><strong>m_source</strong> (<em>array_like</em>) – shape (M,) array of source particle masses</p></li>
-<li><p><strong>softening_target</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of target particle softening radii</p></li>
-<li><p><strong>softening_source</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (M,) array of source particle radii</p></li>
+<li><p><strong>softening_target</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of target particle softening radii - these give the radius of compact support of the M4 cubic spline mass distribution</p></li>
+<li><p><strong>softening_source</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (M,) array of source particle radii - these give the radius of compact support of the M4 cubic spline mass distribution</p></li>
 <li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
 <li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
 <li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
@@ -132,6 +132,44 @@
 
 <dl class="py function">
 <dt>
+<code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">ColumnDensity</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">radii</span></em>, <em class="sig-param"><span class="n">rays</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">tree</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">return_tree</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">parallel</span><span class="o">=</span><span class="default_value">False</span></em><span class="sig-paren">)</span></dt>
+<dd><p>Ray-traced column density calculation.</p>
+<p>Returns the column density from the position of each particle integrated to
+infinity, assuming the particles are represented by uniform spheres. Note
+that optical depth can be obtained by supplying “σ = opacity * mass” in
+place of mass, useful in situations where opacity is highly variable.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
+<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>radii</strong> (<em>array_like</em>) – shape (N,) array containing particle radii of the uniform spheres that
+we use to model the particles’ mass distribution</p></li>
+<li><p><strong>rays</strong> (<em>optional</em>) – Which ray directions to raytrace the columns. DEFAULT: The simple
+6-ray grid.
+OPTION 2: Give a (N_rays,3) array of vectors specifying the
+directions, which will be automatically normalized.
+OPTION 3: Give an integer number N to generate a raygrid of N random
+directions.</p></li>
+<li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the column density over all available cores.
+(default False)</p></li>
+<li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles,
+not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – return the tree used for future use (default False)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns</dt>
+<dd class="field-even"><p><strong>columns</strong> – shape (N,N_rays) float array of column densities from particle
+centers integrated along the rays</p>
+</dd>
+<dt class="field-odd">Return type</dt>
+<dd class="field-odd"><p>array_like</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt>
 <code class="sig-prename descclassname">pytreegrav.frontend.</code><code class="sig-name descname">ConstructTree</code><span class="sig-paren">(</span><em class="sig-param"><span class="n">pos</span></em>, <em class="sig-param"><span class="n">m</span></em>, <em class="sig-param"><span class="n">softening</span><span class="o">=</span><span class="default_value">None</span></em>, <em class="sig-param"><span class="n">quadrupole</span><span class="o">=</span><span class="default_value">False</span></em>, <em class="sig-param"><span class="n">vel</span><span class="o">=</span><span class="default_value">None</span></em><span class="sig-paren">)</span></dt>
 <dd><p>Builds a tree containing particle data, for subsequent potential/field evaluation</p>
 <dl class="field-list simple">
@@ -139,7 +177,9 @@
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
 <li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
-<li><p><strong>softening</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of particle softening lengths</p></li>
+<li><p><strong>softening</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of particle softening lengths - these give the radius of compact support of the M4 cubic spline mass distribution of each particle</p></li>
+<li><p><strong>quadrupole</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to store quadrupole moments (default False)</p></li>
+<li><p><strong>vel</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to store node velocities in the tree (default False)</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns</dt>
@@ -191,7 +231,7 @@
 <li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
 <li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
 <li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
-<li><p><strong>softening</strong> (<em>None</em><em> or </em><em>array_like</em><em>, </em><em>optional</em>) – shape (N,) array containing kernel support radii for gravitational softening - set to 0 by default</p></li>
+<li><p><strong>softening</strong> (<em>None</em><em> or </em><em>array_like</em><em>, </em><em>optional</em>) – shape (N,) array containing kernel support radii for gravitational softening -  - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default</p></li>
 <li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
 <li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
 <li><p><strong>tree</strong> (<em>Octree</em><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)</p></li>
@@ -220,8 +260,8 @@
 <li><p><strong>pos_target</strong> (<em>array_like</em>) – shape (N,3) array of target particle positions where you want to know the potential</p></li>
 <li><p><strong>pos_source</strong> (<em>array_like</em>) – shape (M,3) array of source particle positions (positions of particles sourcing the gravitational field)</p></li>
 <li><p><strong>m_source</strong> (<em>array_like</em>) – shape (M,) array of source particle masses</p></li>
-<li><p><strong>softening_target</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of target particle softening radii</p></li>
-<li><p><strong>softening_source</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (M,) array of source particle radii</p></li>
+<li><p><strong>softening_target</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of target particle softening radii - these give the radius of compact support of the M4 cubic spline mass distribution</p></li>
+<li><p><strong>softening_source</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (M,) array of source particle radii  - these give the radius of compact support of the M4 cubic spline mass distribution</p></li>
 <li><p><strong>G</strong> (<em>float</em><em>, </em><em>optional</em>) – gravitational constant (default 1.0)</p></li>
 <li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)</p></li>
 <li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the force summation over all available cores. (default False)</p></li>
@@ -307,7 +347,7 @@
           </div>
           <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
         <a href="Nbody_simulation.html" class="btn btn-neutral float-left" title="Example: N-body simulation" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
-        <a href="community.html" class="btn btn-neutral float-right" title="Feedback and Contributions" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+        <a href="community.html" class="btn btn-neutral float-right" title="Feedback, Support, and Contributions" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
     </div>
 
   <hr/>
