@@ -832,6 +832,7 @@ def ColumnDensity(
             np.float64(m),
             np.float64(radii),
         )  # build the tree if needed
+    idx = tree.TreewalkIndices
 
     # generate the array of rays
     if rays is None:
@@ -851,10 +852,14 @@ def ColumnDensity(
 
     rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
 
+    pos_sorted = np.take(pos, idx, axis=0)
+
     if parallel:
-        columns = ColumnDensity_tree_parallel(pos, rays, tree)
+        columns = ColumnDensity_tree_parallel(pos_sorted, rays, tree)
     else:
-        columns = ColumnDensity_tree(pos, rays, tree)
+        columns = ColumnDensity_tree(pos_sorted, rays, tree)
+
+    columns = np.take(columns, idx.argsort(), axis=0)
 
     if return_tree:
         return columns, tree
