@@ -171,5 +171,6 @@ columns_10 = ColumnDensity(x, m, h, rays=10, parallel=True) # shape (N, 10) arra
 σ = m * κ # total cross-section in each particle is product of mass and opacity
 𝛕 = ColumnDensity(x, σ, h, parallel=True) # can pass cross-section instead of mass to get optical depth
 𝛕_eff = -np.log(np.exp(-𝛕.clip(-300,300)).mean(axis=1)) # effective optical depth that would give the same radiation flux from a background; note clipping because overflow is not uncommon here
-NH_eff = 𝛕_eff / κ # effective column density *for this opacity*
+Σ_eff = 𝛕_eff / κ # effective column density *for this opacity* in code mass/code length^2
+NH_eff = Σ_eff X_H / m_p  # column density in H nuclei code length^-2
 ```
