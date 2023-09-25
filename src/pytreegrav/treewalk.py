@@ -242,6 +242,7 @@ def PotentialTarget_tree(
     shape (N,) array of potential values at each point in pos
     """
     result = empty(pos_target.shape[0])
+    set_parallel_chunksize(10000)
     if quadrupole:
         for i in prange(pos_target.shape[0]):
             result[i] = G * PotentialWalk_quad(
@@ -277,6 +278,7 @@ def AccelTarget_tree(
     if softening_target is None:
         softening_target = zeros(pos_target.shape[0])
     result = empty(pos_target.shape)
+    set_parallel_chunksize(10000)
     if quadrupole:
         for i in prange(pos_target.shape[0]):
             result[i] = G * AccelWalk_quad(
@@ -930,7 +932,7 @@ def ColumnDensity_tree(pos_target, rays, tree):
     tree -- Octree instance containing the positions, masses, and softenings of
     the source particles
     """
-    set_parallel_chunksize(1000)
+    set_parallel_chunksize(10000)
     result = empty((pos_target.shape[0], rays.shape[0]))
     for i in range(rays.shape[0]):
         # outer loop over rays - empirically better access pattern
