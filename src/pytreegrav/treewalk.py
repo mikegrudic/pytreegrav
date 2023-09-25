@@ -1,5 +1,5 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like, dot, fabs
-from numba import njit, prange, get_num_threads
+from numba import njit, prange, get_num_threads, set_parallel_chunksize
 from math import copysign
 from .kernel import *
 import numpy as np
@@ -930,6 +930,7 @@ def ColumnDensity_tree(pos_target, rays, tree):
     tree -- Octree instance containing the positions, masses, and softenings of
     the source particles
     """
+    set_parallel_chunksize(100)
     result = empty((pos_target.shape[0], rays.shape[0]))
     for i in range(rays.shape[0]):
         # outer loop over rays - empirically better access pattern
