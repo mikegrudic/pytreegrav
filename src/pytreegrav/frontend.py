@@ -858,6 +858,8 @@ def ColumnDensity(
         columns = ColumnDensity_tree_parallel(pos_sorted, rays, tree)
     else:
         columns = ColumnDensity_tree(pos_sorted, rays, tree)
+    if np.any(np.isnan(columns)):
+        print("WARNING some column densities are NaN!")
 
     columns = np.take(columns, idx.argsort(), axis=0)
 

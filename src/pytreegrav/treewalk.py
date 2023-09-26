@@ -849,7 +849,7 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
     return columns
 
 
-@njit(fastmath=True)
+@njit(fastmath=True)  # {"afn"})
 def ColumnDensityWalk(pos, ray, tree, no=-1):
     """Returns the integrated column density to infinity from pos, in the directions given by the rays argument
 
@@ -878,9 +878,10 @@ def ColumnDensityWalk(pos, ray, tree, no=-1):
             dx[k] = tree.Coordinates[no, k] - pos[k]
             r2 += dx[k] * dx[k]
         r = sqrt(r2)
-        #        for i in range(N_rays):
         z_ray = ray[0] * dx[0] + ray[1] * dx[1] + ray[2] * dx[2]
-        #        print(f"r={r}, z_ray={z_ray}")
+        if r2 - z_ray * z_ray < 0:
+            no = tree.NextBranch[no]
+            continue
         h_no = tree.Softenings[no]
         h_no_inv = 1.0 / h_no
         h = h_no  # max(h_no,softening)
@@ -889,7 +890,6 @@ def ColumnDensityWalk(pos, ray, tree, no=-1):
             # add the particle's column if it's in the right direction
             fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv
             # assumes uniform sphere geometry
-            #            for i in range(N_rays):
             r_proj = sqrt(r2 - z_ray * z_ray)
             q = r_proj * h_no_inv
             if r_proj < h_no:
@@ -938,6 +938,7 @@ def ColumnDensity_tree(pos_target, rays, tree):
         # outer loop over rays - empirically better access pattern
         for j in prange(pos_target.shape[0]):
             result[j, i] = ColumnDensityWalk(pos_target[j], rays[i], tree)
+
     return result
 
 
