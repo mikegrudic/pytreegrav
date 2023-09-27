@@ -6,6 +6,7 @@ from .octree import *
 from .dynamic_tree import *
 from .treewalk import *
 from .bruteforce import *
+from .misc import *
 
 
 def valueTestMethod(method):
@@ -785,13 +786,20 @@ def VelocityStructFunc(
 
 
 def ColumnDensity(
-    pos, m, radii, rays=None, tree=None, return_tree=False, parallel=False
+    pos,
+    m,
+    radii,
+    rays=None,
+    randomize_rays=False,
+    tree=None,
+    return_tree=False,
+    parallel=False,
 ):
     """Ray-traced column density calculation.
 
     Returns the column density from the position of each particle integrated to
     infinity, assuming the particles are represented by uniform spheres. Note
-    that optical depth can be obtained by supplying "σ = opacity * mass" in
+    that optical depth can be obtained by supplying "sigma = opacity * mass" in
     place of mass, useful in situations where opacity is highly variable.
 
     Parameters
@@ -803,13 +811,15 @@ def ColumnDensity(
     radii: array_like
         shape (N,) array containing particle radii of the uniform spheres that
         we use to model the particles' mass distribution
-    rays: optional
+    rays: bool, optional
         Which ray directions to raytrace the columns. DEFAULT: The simple
         6-ray grid.
         OPTION 2: Give a (N_rays,3) array of vectors specifying the
         directions, which will be automatically normalized.
         OPTION 3: Give an integer number N to generate a raygrid of N random
         directions.
+    randomize_rays: bool, optional
+        Randomize the orientation of the ray-grid *for each particle*
     parallel: bool, optional
         If True, will parallelize the column density over all available cores.
         (default False)
@@ -853,14 +863,16 @@ def ColumnDensity(
     rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
 
     pos_sorted = np.take(pos, idx, axis=0)
-
     if parallel:
-        columns = ColumnDensity_tree_parallel(pos_sorted, rays, tree)
+        columns = ColumnDensity_tree_parallel(
+            pos_sorted, rays, tree, randomize_rays=randomize_rays
+        )
     else:
-        columns = ColumnDensity_tree(pos_sorted, rays, tree)
+        columns = ColumnDensity_tree(
+            pos_sorted, rays, tree, randomize_rays=randomize_rays
+        )
     if np.any(np.isnan(columns)):
         print("WARNING some column densities are NaN!")
-
     columns = np.take(columns, idx.argsort(), axis=0)
 
     if return_tree:

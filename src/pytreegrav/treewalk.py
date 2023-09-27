@@ -2,7 +2,9 @@ from numpy import sqrt, empty, zeros, empty_like, zeros_like, dot, fabs
 from numba import njit, prange, get_num_threads, set_parallel_chunksize
 from math import copysign
 from .kernel import *
+from .misc import *
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 
 @njit(fastmath=True)
@@ -795,7 +797,6 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
         r = sqrt(r2)
         for i in range(N_rays):
             z_ray[i] = rays[i, 0] * dx[0] + rays[i, 1] * dx[1] + rays[i, 2] * dx[2]
-        #        print(f"r={r}, z_ray={z_ray}")
         h_no = tree.Softenings[no]
         h_no_inv = 1.0 / h_no
         h = h_no  # max(h_no,softening)
@@ -806,6 +807,9 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
                 fac_density * tree.Masses[no] * h_no_inv * h_no_inv
             )  # assumes uniform sphere geometry
             for i in range(N_rays):
+                r_proj = r2 - z_ray[i] * z_ray[i]
+                if r_proj < 0:
+                    continue
                 r_proj = sqrt(r2 - z_ray[i] * z_ray[i])
                 q = r_proj * h_no_inv
                 if r_proj < h_no:
@@ -923,21 +927,32 @@ def ColumnDensityWalk(pos, ray, tree, no=-1):
     return column
 
 
-def ColumnDensity_tree(pos_target, rays, tree):
-    """Returns the gravitational potential at the specified points, given a
-    tree containing the mass distribution
+def ColumnDensity_tree(pos_target, rays, tree, randomize_rays=False):
+    """Returns the column density integrated to infinity from pos_target along rays, given the mass distribution in an Octree
+
     Arguments:
     pos_target -- shape (N,3) array of positions at which to evaluate the
     potential
+    rays -- Shape (N_rays,3) array of ray direction unit vectors
     tree -- Octree instance containing the positions, masses, and softenings of
     the source particles
+    randomize_rays: bool, optional
+    Randomly orients the raygrid for each particle.
+
     """
     set_parallel_chunksize(10000)
     result = empty((pos_target.shape[0], rays.shape[0]))
-    for i in range(rays.shape[0]):
-        # outer loop over rays - empirically better access pattern
-        for j in prange(pos_target.shape[0]):
-            result[j, i] = ColumnDensityWalk(pos_target[j], rays[i], tree)
+
+    if randomize_rays:
+        # use the multi-ray treewalk; more efficient
+        for i in prange(pos_target.shape[0]):
+            rays_random = rays @ random_rotation(i)
+            result[i] = ColumnDensityWalk_multiray(pos_target[i], rays_random, tree)
+    else:
+        for i in range(rays.shape[0]):
+            # outer loop over rays - empirically better access pattern
+            for j in prange(pos_target.shape[0]):
+                result[j, i] = ColumnDensityWalk(pos_target[j], rays[i], tree)
 
     return result
 
