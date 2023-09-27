@@ -167,6 +167,8 @@ pytreegrav's octree implementation can be used for efficient tree-based searches
 ```python
 columns = ColumnDensity(x, m, h, parallel=True) # shape (N,6) array of column densities along 6 rays oriented along cartesian axes
 columns_10 = ColumnDensity(x, m, h, rays=10, parallel=True) # shape (N, 10) array column densities along 10 random rays
+columns_random = ColumnDensity(x, m, h, randomize_rays=True, parallel=True) # can randomize the ray grid for each particle so that there are no correlated errors due to the angular discretization
+columns_custom = ColumnDensity(x, m, h, rays=np.random.normal(size=(100,3)), parallel=True)  # can also pass an arbitrary set of rays for the raygrid; these need not be normalized
 κ = 0.02 # example opacity, in code units
 σ = m * κ # total cross-section in each particle is product of mass and opacity
 𝛕 = ColumnDensity(x, σ, h, parallel=True) # can pass cross-section instead of mass to get optical depth
