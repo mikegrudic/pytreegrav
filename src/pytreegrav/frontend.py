@@ -23,7 +23,9 @@ def valueTestMethod(method):
         )
 
 
-def ConstructTree(pos, m, softening=None, quadrupole=False, vel=None):
+def ConstructTree(
+    pos, m, softening=None, quadrupole=False, vel=None, compute_moments=True
+):
     """Builds a tree containing particle data, for subsequent potential/field evaluation
 
     Parameters
@@ -56,7 +58,9 @@ def ConstructTree(pos, m, softening=None, quadrupole=False, vel=None):
         )
         raise
     if vel is None:
-        return Octree(pos, m, softening, quadrupole=quadrupole)
+        return Octree(
+            pos, m, softening, quadrupole=quadrupole, compute_moments=compute_moments
+        )
     else:
         return DynamicOctree(pos, m, softening, vel, quadrupole=quadrupole)
 
@@ -792,6 +796,7 @@ def ColumnDensity(
     rays=None,
     randomize_rays=False,
     tree=None,
+    theta=0,
     return_tree=False,
     parallel=False,
 ):

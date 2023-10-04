@@ -58,7 +58,15 @@ octant_offsets = 0.25 * np.array(
 class Octree(object):
     """Octree implementation."""
 
-    def __init__(self, points, masses, softening, morton_order=True, quadrupole=False):
+    def __init__(
+        self,
+        points,
+        masses,
+        softening,
+        morton_order=True,
+        quadrupole=False,
+        compute_moments=True,
+    ):
         self.TreewalkIndices = -ones(points.shape[0], dtype=np.int64)
         self.HasQuads = quadrupole
         children = self.BuildTree(
@@ -81,9 +89,10 @@ class Octree(object):
                 self, self.NumParticles, children
             )  # re-do the treewalk order with the new indices
 
-        ComputeMoments(
-            self, self.NumParticles, children
-        )  # compute centers of mass, etc.
+        if compute_moments:
+            ComputeMoments(
+                self, self.NumParticles, children
+            )  # compute centers of mass, etc.
 
     def BuildTree(self, points, masses, softening):
         # initialize all attributes
