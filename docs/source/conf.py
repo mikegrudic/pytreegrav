@@ -12,7 +12,7 @@
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../src'))
+sys.path.insert(0, os.path.abspath('../../src'))
 
 
 # -- Project information -----------------------------------------------------
@@ -22,7 +22,7 @@ copyright = '2021, Mike Grudic'
 author = 'Mike Grudic'
 
 # The full version, including alpha/beta/rc tags
-release = '0.27'
+release = '1.2.1'
 
 
 # -- General configuration ---------------------------------------------------
