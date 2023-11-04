@@ -1,5 +1,5 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like, dot, fabs
-from numba import njit, prange, get_num_threads, set_parallel_chunksize
+from numba import njit, prange, get_num_threads, set_parallel_chunksize, int64, float64
 from math import copysign
 from .kernel import *
 from .misc import *
@@ -8,12 +8,40 @@ from scipy.spatial.transform import Rotation as R
 
 
 @njit(fastmath=True)
+def acceptance_criterion(
+    r: float, h: float, size: float, delta: float, theta: float
+) -> bool:
+    """Criterion for accepting the multipole approximation for summing the contribution of a node"""
+    return r > max(size / theta + delta, h + size * 0.6 + delta)
+
+
+@njit([int64(float64[:])], fastmath=True)
+def angular_bin(dx):
+    """Angular bin for binned column density estimator"""
+    if fabs(dx[0]) > fabs(dx[1]) and fabs(dx[0]) > fabs(dx[2]):
+        if dx[0] > 0:
+            bin = 0
+        else:
+            bin = 1
+    elif fabs(dx[1]) > fabs(dx[2]):
+        if dx[1] > 0:
+            bin = 2
+        else:
+            bin = 3
+    else:
+        if dx[2] > 0:
+            bin = 4
+        else:
+            bin = 5
+    return bin
+
+
+@njit(fastmath=True)
 def NearestImage(x, boxsize):
     if abs(x) > boxsize / 2:
         return -copysign(boxsize - abs(x), x)
     else:
         return x
-    # define TMP_WRAP_X_S(x,y,z,sign) (x=((x)>boxHalf_X)?((x)-boxSize_X):(((x)<-boxHalf_X)?((x)+boxSize_X):(x)))
 
 
 @njit(fastmath=True)
@@ -47,9 +75,8 @@ def PotentialWalk(pos, tree, softening=0, no=-1, theta=0.7):
                 else:
                     phi -= tree.Masses[no] / r
             no = tree.NextBranch[no]
-        elif r > max(
-            tree.Sizes[no] / theta + tree.Deltas[no],
-            h + tree.Sizes[no] * 0.6 + tree.Deltas[no],
+        elif acceptance_criterion(
+            r, h, tree.Sizes[no], tree.Deltas[no], theta
         ):  # if we satisfy the criteria for accepting the monopole
             phi -= tree.Masses[no] / r
             no = tree.NextBranch[no]
@@ -90,9 +117,8 @@ def PotentialWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):
                 else:
                     phi -= tree.Masses[no] / r
             no = tree.NextBranch[no]
-        elif r > max(
-            tree.Sizes[no] / theta + tree.Deltas[no],
-            h + tree.Sizes[no] * 0.6 + tree.Deltas[no],
+        elif acceptance_criterion(
+            r, h, tree.Sizes[no], tree.Deltas[no], theta
         ):  # if we satisfy the criteria for accepting the monopole
             phi -= tree.Masses[no] / r
             # phi -= 0.5 * np.dot(np.dot(dx,tree.Quadrupoles[no]),dx)/(r*r*r*r*r) # Potential from the quadrupole moment
@@ -109,9 +135,7 @@ def PotentialWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):
 
 
 @njit(fastmath=True)
-def AccelWalk(
-    pos, tree, softening=0, no=-1, theta=0.7
-):  # ,include_self_potential=False):
+def AccelWalk(pos, tree, softening=0, no=-1, theta=0.7):
     """Returns the gravitational acceleration field at position x by performing the Barnes-Hut treewalk using the provided octree instance
     Arguments:
     pos - (3,) array containing position of interest
@@ -146,9 +170,8 @@ def AccelWalk(
                     fac = tree.Masses[no] / (r * r2)
                 sum_field = True
             no = tree.NextBranch[no]
-        elif r > max(
-            tree.Sizes[no] / theta + tree.Deltas[no],
-            h + tree.Sizes[no] * 0.6 + tree.Deltas[no],
+        elif acceptance_criterion(
+            r, h, tree.Sizes[no], tree.Deltas[no], theta
         ):  # if we satisfy the criteria for accepting the monopole
             fac = tree.Masses[no] / (r * r2)
             sum_field = True
@@ -202,9 +225,8 @@ def AccelWalk_quad(
                 g[k] += fac * dx[k]  # monopole
             no = tree.NextBranch[no]
             continue
-        elif r > max(
-            tree.Sizes[no] / theta + tree.Deltas[no],
-            h + tree.Sizes[no] * 0.6 + tree.Deltas[no],
+        elif acceptance_criterion(
+            r, h, tree.Sizes[no], tree.Deltas[no], theta
         ):  # if we satisfy the criteria for accepting the multipole expansion
             fac = tree.Masses[no] / (r * r2)
             quad = tree.Quadrupoles[no]
@@ -853,8 +875,8 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
     return columns
 
 
-@njit(fastmath=True)  # {"afn"})
-def ColumnDensityWalk(pos, ray, tree, no=-1):
+@njit(fastmath=True)
+def ColumnDensityWalk_singleray(pos, ray, tree, no=-1):
     """Returns the integrated column density to infinity from pos, in the directions given by the rays argument
 
     Arguments:
@@ -927,33 +949,84 @@ def ColumnDensityWalk(pos, ray, tree, no=-1):
     return column
 
 
-def ColumnDensity_tree(pos_target, rays, tree, randomize_rays=False):
-    """Returns the column density integrated to infinity from pos_target along rays, given the mass distribution in an Octree
+@njit(fastmath=True)
+def ColumnDensityWalk_binned(pos, tree, theta=0.5, no=-1):
+    """Returns the integrated column density to infinity from pos, in the directions given by the rays argument
 
     Arguments:
-    pos_target -- shape (N,3) array of positions at which to evaluate the
-    potential
-    rays -- Shape (N_rays,3) array of ray direction unit vectors
-    tree -- Octree instance containing the positions, masses, and softenings of
-    the source particles
+    pos - (3,) array containing position of interest
+    tree - octree object storing the tree structure
+
+    Returns:
+    columns - shape (6,) array of average column densities in the 6 equal bins on the sphere
+
+    Keyword arguments:
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    """
+    if no < 0:
+        no = tree.NumParticles  # we default to the top-level node index
+
+    column = np.zeros(6)
+    dx = np.empty(3, dtype=np.float64)
+
+    while no > -1:
+        r2 = 0
+        for k in range(3):
+            dx[k] = tree.Coordinates[no, k] - pos[k]
+            r2 += dx[k] * dx[k]
+
+        h_no = tree.Softenings[no]
+        h = h_no
+        if no < tree.NumParticles:  # if we're looking at a leaf/particle
+            # add the particle's column if it's in the right direction
+            column[angular_bin(dx)] += tree.Masses[no] / (r2 + h * h)
+            no = tree.NextBranch[no]
+        elif acceptance_criterion(
+            sqrt(r2), h, tree.Sizes[no], tree.Deltas[no], theta
+        ):  # we can put the whole node in a bin
+            column[angular_bin(dx)] += tree.Masses[no] / r2
+            no = tree.NextBranch[no]
+        else:
+            no = tree.FirstSubnode[no]
+    return column * 6 / (4 * np.pi)
+
+
+def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=0.7):
+    """Returns the column density integrated to infinity from pos_target along rays, given the mass distribution in an Octree
+
+    Parameters
+    ----------
+    pos_target: array_like
+        shape (N,3) array of target particle positions where you want to know the potential.
+    tree: Octree
+        Octree instance initialized with the positions, masses, and softenings of the source particles.
+    rays: array_like
+        Shape (N_rays,3) array of ray direction unit vectors. If None then we instead compute average column densities in a 6-bin tesselation of the sphere.
     randomize_rays: bool, optional
     Randomly orients the raygrid for each particle.
+    Randomly orients the raygrid for each particle.
+
+        Randomly orients the raygrid for each particle.
 
     """
     set_parallel_chunksize(10000)
-    result = empty((pos_target.shape[0], rays.shape[0]))
 
-    if randomize_rays:
+    if rays is None:  # do angular-binned column density
+        result = empty((pos_target.shape[0], 6))
+        for i in prange(pos_target.shape[0]):
+            result[i] = ColumnDensityWalk_binned(pos_target[i], tree, theta)
+    elif randomize_rays:
         # use the multi-ray treewalk; more efficient
+        result = empty((pos_target.shape[0], len(rays)))
         for i in prange(pos_target.shape[0]):
             rays_random = rays @ random_rotation(i)
             result[i] = ColumnDensityWalk_multiray(pos_target[i], rays_random, tree)
     else:
+        result = empty((pos_target.shape[0], len(rays)))
         for i in range(rays.shape[0]):
             # outer loop over rays - empirically better access pattern
             for j in prange(pos_target.shape[0]):
-                result[j, i] = ColumnDensityWalk(pos_target[j], rays[i], tree)
-
+                result[j, i] = ColumnDensityWalk_singleray(pos_target[j], rays[i], tree)
     return result
 
 

@@ -796,14 +796,14 @@ def ColumnDensity(
     rays=None,
     randomize_rays=False,
     tree=None,
-    theta=0,
+    theta=0.5,
     return_tree=False,
     parallel=False,
 ):
-    """Ray-traced column density calculation.
+    """Ray-traced or angle-binned column density calculation.
 
-    Returns the column density from the position of each particle integrated to
-    infinity, assuming the particles are represented by uniform spheres. Note
+    Returns an estimate of the column density from the position of each particle
+    integrated to infinity, assuming the particles are represented by uniform spheres. Note
     that optical depth can be obtained by supplying "sigma = opacity * mass" in
     place of mass, useful in situations where opacity is highly variable.
 
@@ -816,13 +816,12 @@ def ColumnDensity(
     radii: array_like
         shape (N,) array containing particle radii of the uniform spheres that
         we use to model the particles' mass distribution
-    rays: bool, optional
-        Which ray directions to raytrace the columns. DEFAULT: The simple
-        6-ray grid.
-        OPTION 2: Give a (N_rays,3) array of vectors specifying the
+    rays: optional
+        Which ray directions to raytrace the columns.
+        None: use the angular-binned column density method with 6 bins on the sky
+        OPTION 2: Integer number: use this many rays, with 6 usingthe standard 6-ray grid and other numbers sampling random direections
+        OPTION 3: Give a (N_rays,3) array of vectors specifying the
         directions, which will be automatically normalized.
-        OPTION 3: Give an integer number N to generate a raygrid of N random
-        directions.
     randomize_rays: bool, optional
         Randomize the orientation of the ray-grid *for each particle*
     parallel: bool, optional
@@ -831,6 +830,8 @@ def ColumnDensity(
     tree: Octree, optional
         optional pre-generated Octree: this can contain any set of particles,
         not necessarily the target particles at pos (default None)
+    theta: float, optional
+        Opening angle for beam-traced angular bin estimator
     return_tree: bool, optional
         return the tree used for future use (default False)
 
@@ -848,13 +849,14 @@ def ColumnDensity(
             np.float64(radii),
         )  # build the tree if needed
     idx = tree.TreewalkIndices
+    pos_sorted = np.take(pos, idx, axis=0)
 
-    # generate the array of rays
-    if rays is None:
-        rays = np.vstack([np.eye(3), -np.eye(3)])  # 6-ray grid
-    elif type(rays) == int:
-        # generate a random grid of ray directions
-        rays = np.random.normal(size=(rays, 3))  # normalize later
+    if type(rays) == int:
+        if rays == 6:
+            rays = np.vstack([np.eye(3), -np.eye(3)])  # 6-ray grid
+        else:
+            # generate a random grid of ray directions
+            rays = np.random.normal(size=(rays, 3))  # normalize later
     elif type(rays) == np.ndarray:
         # check that the shape is correct
         if not len(rays.shape) == 2:
@@ -862,19 +864,19 @@ def ColumnDensity(
         elif rays.shape[1] != 3:
             raise Exception("rays array argument is not an array of 3D vectors.")
         rays = np.copy(rays)  # so that we don't overwrite the argument
-    else:
+    elif rays is not None:
         raise Exception("rays argument type is not supported")
 
-    rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
+    if rays is not None:
+        rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
 
-    pos_sorted = np.take(pos, idx, axis=0)
     if parallel:
         columns = ColumnDensity_tree_parallel(
-            pos_sorted, rays, tree, randomize_rays=randomize_rays
+            pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta
         )
     else:
         columns = ColumnDensity_tree(
-            pos_sorted, rays, tree, randomize_rays=randomize_rays
+            pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta
         )
     if np.any(np.isnan(columns)):
         print("WARNING some column densities are NaN!")
