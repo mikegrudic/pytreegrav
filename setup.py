@@ -12,7 +12,7 @@ if os.path.isfile(requirementPath):
 
 setuptools.setup(
     name="pytreegrav",
-    version="1.1.2",
+    version="1.1.3",
     author="Mike Grudic",
     author_email="mike.grudich@gmail.com",
     description="Fast approximate gravitational force and potential calculations",
