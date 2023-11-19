@@ -117,11 +117,9 @@ def PotentialWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):
                 else:
                     phi -= tree.Masses[no] / r
             no = tree.NextBranch[no]
-        elif acceptance_criterion(
-            r, h, tree.Sizes[no], tree.Deltas[no], theta
-        ):  # if we satisfy the criteria for accepting the monopole
+        elif acceptance_criterion(r, h, tree.Sizes[no], tree.Deltas[no], theta):
+            # if we satisfy the criteria for accepting the monopole
             phi -= tree.Masses[no] / r
-            # phi -= 0.5 * np.dot(np.dot(dx,tree.Quadrupoles[no]),dx)/(r*r*r*r*r) # Potential from the quadrupole moment
             quad = tree.Quadrupoles[no]
             r5inv = 1 / (r * r * r * r * r)
             for k in range(3):
@@ -163,16 +161,14 @@ def AccelWalk(pos, tree, softening=0, no=-1, theta=0.7):
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
             if r > 0:  # no self-force
                 if r < h:  # within the softening radius
-                    fac = tree.Masses[no] * ForceKernel(
-                        r, h
-                    )  # fac stores the quantity M(<R)/R^3 to be used later for force computation
+                    # fac stores the quantity M(<R)/R^3 to be used later for force computation
+                    fac = tree.Masses[no] * ForceKernel(r, h)
                 else:  # use point mass force
                     fac = tree.Masses[no] / (r * r2)
                 sum_field = True
             no = tree.NextBranch[no]
-        elif acceptance_criterion(
-            r, h, tree.Sizes[no], tree.Deltas[no], theta
-        ):  # if we satisfy the criteria for accepting the monopole
+        elif acceptance_criterion(r, h, tree.Sizes[no], tree.Deltas[no], theta):
+            # if we satisfy the criteria for accepting the monopole
             fac = tree.Masses[no] / (r * r2)
             sum_field = True
             no = tree.NextBranch[no]  # go to the next branch in the tree
@@ -216,21 +212,18 @@ def AccelWalk_quad(
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
             if r > 0:  # no self-force
                 if r < h:  # within the softening radius
-                    fac = tree.Masses[no] * ForceKernel(
-                        r, h
-                    )  # fac stores the quantity M(<R)/R^3 to be used later for force computation
+                    # fac stores the quantity M(<R)/R^3 to be used later for force computation
+                    fac = tree.Masses[no] * ForceKernel(r, h)
                 else:  # use point mass force
                     fac = tree.Masses[no] / (r * r2)
             for k in range(3):
                 g[k] += fac * dx[k]  # monopole
             no = tree.NextBranch[no]
             continue
-        elif acceptance_criterion(
-            r, h, tree.Sizes[no], tree.Deltas[no], theta
-        ):  # if we satisfy the criteria for accepting the multipole expansion
+        elif acceptance_criterion(r, h, tree.Sizes[no], tree.Deltas[no], theta):
+            # if we satisfy the criteria for accepting the multipole expansion
             fac = tree.Masses[no] / (r * r2)
             quad = tree.Quadrupoles[no]
-            #            g -= dot(tree.Quadrupoles[no], dx/r)/(r*r*r*r) - 2.5*dot(dx/r, dot(tree.Quadrupoles[no], dx/r))*dx/(r*r*r*r*r)
             r5inv = 1 / (r2 * r2 * r)
             quad_fac = 0
             for k in range(3):
