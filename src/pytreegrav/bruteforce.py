@@ -5,8 +5,7 @@ from .kernel import *
 
 
 def PotentialTarget_bruteforce(
-    x_target, softening_target, x_source, m_source, softening_source, G=1.0
-):
+    x_target, softening_target, x_source, m_source, softening_source, G=1.0):
     """Returns the exact gravitational potential due to a set of particles, at a set of positions that need not be the same as the particle positions.
 
     Arguments:
@@ -25,9 +24,9 @@ def PotentialTarget_bruteforce(
     potential = np.zeros(x_target.shape[0])
     dx = np.empty(3)
     for i in prange(x_target.shape[0]):
-        for j in range(x_source.shape[0]):
-            for k in range(3):
-                dx[k] = x_target[i, k] - x_source[j, k]
+        for j in range(x_source.shape[ 0]):
+            for k in range(3):  
+                dx[k] = x_target [i, k] - x_source[j, k]
             r = sqrt(dx[0] * dx[0] + dx[1] * dx[1] + dx[2] * dx[2])
 
             h = max(softening_source[j], softening_target[i])

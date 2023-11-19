@@ -145,12 +145,10 @@ class Octree(object):
 
                 # check if there is a pre-existing node among the present node's children
                 child_candidate = children[no, octant]
-                if (
-                    child_candidate > -1
-                ):  # it exists, now check if it's a node or a particle
-                    if (
-                        child_candidate < self.NumParticles
-                    ):  # it's a particle - we have to create a new node of index new_node_idx containing the 2 points we've got, and point the pre-existing particle to the new particle
+                if child_candidate > -1:
+                    # it exists, now check if it's a node or a particle
+                    if child_candidate < self.NumParticles:
+                        # it's a particle - we have to create a new node of index new_node_idx containing the 2 points we've got, and point the pre-existing particle to the new particle
                         # EXCEPTION: if the pre-existing particle is at the same coordinate, we will perturb the position of the new particle slightly and start over
                         same_coord = True
                         for k in range(3):
@@ -169,25 +167,23 @@ class Octree(object):
                         # end exception
 
                         children[no, octant] = new_node_idx
+                        # set the center of the new node
                         self.Coordinates[new_node_idx] = (
                             self.Coordinates[no]
                             + self.Sizes[no] * octant_offsets[octant]
-                        )  # set the center of the new node
-                        self.Sizes[new_node_idx] = (
-                            self.Sizes[no] / 2
-                        )  # set the size of the new node
+                        )
+                        # set the size of the new node
+                        self.Sizes[new_node_idx] = self.Sizes[no] / 2
                         new_octant = 0
                         for dim in range(3):
                             if (
                                 self.Coordinates[child_candidate, dim]
                                 > self.Coordinates[new_node_idx, dim]
                             ):
-                                new_octant += (
-                                    1 << dim
-                                )  # get the octant of the new node that pre-existing particle lives in
-                        children[
-                            new_node_idx, new_octant
-                        ] = child_candidate  # set the pre-existing particle as a child of the new node
+                                # get the octant of the new node that pre-existing particle lives in
+                                new_octant += 1 << dim
+                        # set the pre-existing particle as a child of the new node
+                        children[new_node_idx, new_octant] = child_candidate
                         no = new_node_idx
                         new_node_idx += 1
                         continue  # restart the loop looking at the new node
@@ -213,9 +209,8 @@ class Octree(object):
 
 
 @njit
-def ComputeMoments(
-    tree, no, children
-):  # does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM
+def ComputeMoments(tree, no, children):
+    """Does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM"""
     quad = zeros((3, 3))
     if no < tree.NumParticles:  # if this is a particle, just return the properties
         return tree.Softenings[no], tree.Masses[no], quad, tree.Coordinates[no]
@@ -268,16 +263,12 @@ def SetupTreewalk(tree, no, children):
     for c in children[no]:
         if c < 0:
             continue
-        #        tree.ParentNode[c] = no
+        # if we haven't yet set current node's next node, do so
         if tree.FirstSubnode[no] < 0:
-            tree.FirstSubnode[
-                no
-            ] = c  # if we haven't yet set current node's next node, do so
-
+            tree.FirstSubnode[no] = c
+        # set this up to point to the next "branch" of the tree to look at if we sum the force for the current branch
         if last_node > -1:
-            tree.NextBranch[
-                last_node
-            ] = c  # set this up to point to the next "branch" of the tree to look at if we sum the force for the current branch
+            tree.NextBranch[last_node] = c
         last_node = c
 
     # need to deal with the last child: must link it up to the sibling of the present node
