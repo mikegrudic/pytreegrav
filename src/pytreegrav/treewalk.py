@@ -395,7 +395,6 @@ def DensityCorrWalk(
             r += dx[k] * dx[k]
 
         r = sqrt(r)
-        #        theta = min(1,theta * np.exp(0.5*np.random.normal())) # if we randomize the opening criteria a bit we'll get fewer binning artifacts
         within_bounds = (r > rmin) and (r < rmax)
         if within_bounds:
             logr = np.log10(r)

@@ -12,31 +12,24 @@ from numba import (
 )
 from numba.experimental import jitclass
 import numpy as np
-from numpy import empty, empty_like, zeros, zeros_like, sqrt, ones
+from numpy import empty, empty_like, zeros, zeros_like, sqrt, ones, concatenate
 
 spec = [
     ("Sizes", float64[:]),  # side length of tree nodes
     ("Deltas", float64[:]),  # distance between COM and geometric center of node
-    (
-        "Coordinates",
-        float64[:, :],
-    ),  # location of center of mass of node (actually stores _geometric_ center before we do the moments pass)
+    # location of center of mass of node (actually stores _geometric_ center before we do the moments pass)
+    ("Coordinates", float64[:, :]),
     ("Masses", float64[:]),  # total mass of node
     ("Quadrupoles", float64[:, :, :]),  # Quadrupole moment of the node
-    (
-        "HasQuads",
-        boolean,
-    ),  # Allow us to quickly check if Quadrupole moments exist to keep monopole calculations fast
+    # Allow us to quickly check if Quadrupole moments exist to keep monopole calculations fast
+    ("HasQuads", boolean),
     ("NumParticles", int64),  # number of particles in the tree
     ("NumNodes", int64),  # number of particles + nodes (i.e. mass elements) in the tree
-    (
-        "Softenings",
-        float64[:],
-    ),  # individual softenings for particles, _maximum_ softening of inhabitant particles for nodes
+    # individual softenings for particles, _maximum_ softening of inhabitant particles for nodes
+    ("Softenings", float64[:]),
     ("NextBranch", int64[:]),
     ("FirstSubnode", int64[:]),
     ("TreewalkIndices", int64[:]),
-    # ('children',int64[:,:]) # indices of child nodes
 ]
 
 
@@ -67,52 +60,31 @@ class Octree(object):
         quadrupole=False,
         compute_moments=True,
     ):
+        self.NumNodes = 0
         self.TreewalkIndices = -ones(points.shape[0], dtype=np.int64)
         self.HasQuads = quadrupole
-        children = self.BuildTree(
-            points, masses, softening
-        )  # first provisional treebuild to get the ordering right
-        SetupTreewalk(
-            self, self.NumParticles, children
-        )  # set up the order of the treewalk
+        # first provisional treebuild to get the ordering right
+        children = self.BuildTree(points, masses, softening)
+        # set up the order of the treewalk
+        SetupTreewalk(self, self.NumParticles, children)
         self.GetWalkIndices()  # get the Morton ordering of the points
 
-        if (
-            morton_order
-        ):  # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
+        # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
+        if morton_order:
             children = self.BuildTree(
                 points[self.TreewalkIndices],
                 np.take(masses, self.TreewalkIndices),
                 np.take(softening, self.TreewalkIndices),
             )  # now re-build the tree with everything in order
-            SetupTreewalk(
-                self, self.NumParticles, children
-            )  # re-do the treewalk order with the new indices
+            # re-do the treewalk order with the new indices
+            SetupTreewalk(self, self.NumParticles, children)
 
         if compute_moments:
-            ComputeMoments(
-                self, self.NumParticles, children
-            )  # compute centers of mass, etc.
+            # compute centers of mass, etc.
+            ComputeMoments(self, self.NumParticles, children)
 
     def BuildTree(self, points, masses, softening):
-        # initialize all attributes
-        self.NumParticles = points.shape[0]
-        self.NumNodes = (
-            2 * self.NumParticles
-        )  # this is the number of elements in the tree, whether nodes or particles. can make this smaller but this has a safety factor
-        self.Sizes = zeros(self.NumNodes)
-        self.Deltas = zeros(self.NumNodes)
-        self.Masses = zeros(self.NumNodes)
-        if self.HasQuads:
-            self.Quadrupoles = zeros(
-                (self.NumNodes, 3, 3)
-            )  # No need to initialize this beyond zero, all n>0 moments are 0 for a single particle
-        self.Softenings = zeros(self.NumNodes)
-        self.Coordinates = zeros((self.NumNodes, 3))
-        self.Deltas = zeros(self.NumNodes)
-        self.NextBranch = -ones(self.NumNodes, dtype=np.int64)
-        self.FirstSubnode = -ones(self.NumNodes, dtype=np.int64)
-        #        self.ParentNode = -ones(self.NumNodes, dtype=np.int64)
+        self.Initialize(len(points), self.NumNodes)
 
         # set the properties of the root node
         self.Sizes[self.NumParticles] = max(
@@ -131,18 +103,23 @@ class Octree(object):
         self.Softenings[: self.NumParticles] = softening
         children = -ones((self.NumNodes, 8), dtype=np.int64)
         new_node_idx = self.NumParticles + 1
-
         # now we insert particles into the tree one at a time, setting up child pointers and initializing node properties as we go
         for i in range(self.NumParticles):
             pos = points[i]
 
             no = self.NumParticles  # walk the tree, starting at the root
             while no > -1:
+                # first make sure we have enough storage
+                while new_node_idx + 1 > self.NumNodes:
+                    size_increase = increase_tree_size(self)
+                    children = concatenate(
+                        (children, -ones((size_increase, 8), dtype=np.int64))
+                    )
+
                 octant = 0  # the index of the octant that the present point lives in
                 for dim in range(3):
                     if pos[dim] > self.Coordinates[no, dim]:
                         octant += 1 << dim
-
                 # check if there is a pre-existing node among the present node's children
                 child_candidate = children[no, octant]
                 if child_candidate > -1:
@@ -197,7 +174,6 @@ class Octree(object):
 
     def GetWalkIndices(self):  # gets the ordering of the particles in the treewalk
         index = 0
-        node_index = 0
         no = self.NumParticles
         while no > -1:
             if no < self.NumParticles:
@@ -206,6 +182,27 @@ class Octree(object):
                 no = self.NextBranch[no]
             else:
                 no = self.FirstSubnode[no]
+
+    def Initialize(self, Npart, NumNodes):
+        """Allocate all attribute arrays and initialize"""
+        self.NumParticles = Npart
+        # this is the number of elements in the tree, whether nodes or particles. can make this smaller but this has a safety factor
+        if NumNodes:
+            self.NumNodes = NumNodes
+        else:
+            # initial guess for storage needed; can always increase if needed
+            self.NumNodes = int(1.5 * Npart + 1)
+        self.Sizes = zeros(self.NumNodes)
+        self.Deltas = zeros(self.NumNodes)
+        self.Masses = zeros(self.NumNodes)
+        # No need to initialize this beyond zero, all n>0 moments are 0 for a single particle
+        if self.HasQuads:
+            self.Quadrupoles = zeros((self.NumNodes, 3, 3))
+        self.Softenings = zeros(self.NumNodes)
+        self.Coordinates = zeros((self.NumNodes, 3))
+        self.Deltas = zeros(self.NumNodes)
+        self.NextBranch = -ones(self.NumNodes, dtype=np.int64)
+        self.FirstSubnode = -ones(self.NumNodes, dtype=np.int64)
 
 
 @njit
@@ -255,11 +252,9 @@ def ComputeMoments(tree, no, children):
 
 @njit
 def SetupTreewalk(tree, no, children):
-    # print(no)
     if no < tree.NumParticles:
         return  # leaf nodes are handled from above
     last_node = -1
-    last_child = -1
     for c in children[no]:
         if c < 0:
             continue
@@ -277,3 +272,28 @@ def SetupTreewalk(tree, no, children):
     for c in children[no]:
         if c >= tree.NumParticles:  # if we have a node, call routine recursively
             SetupTreewalk(tree, c, children)
+
+
+@njit
+def increase_tree_size(tree, fac=1.2):
+    """Reallocate the tree data with storage increased by factor fac"""
+    old_size = tree.NumNodes
+    size_increase = max(int(old_size * fac + 1) - old_size, 1)
+    print("Increasing size of node list by ", size_increase)  # by %g" % fac)
+
+    tree.Sizes = concatenate((tree.Sizes, zeros(size_increase)))
+    tree.Deltas = concatenate((tree.Deltas, zeros(size_increase)))
+    tree.Masses = concatenate((tree.Masses, zeros(size_increase)))
+    tree.Softenings = concatenate((tree.Softenings, zeros(size_increase)))
+    tree.NextBranch = concatenate(
+        (tree.NextBranch, -ones(size_increase, dtype=np.int64))
+    )
+    tree.FirstSubnode = concatenate(
+        (tree.FirstSubnode, -ones(size_increase, dtype=np.int64))
+    )
+    tree.Coordinates = concatenate((tree.Coordinates, zeros((size_increase, 3))))
+    if tree.HasQuads:
+        tree.Quadrupoles = concatenate((tree.Quadrupoles, zeros((size_increase, 3, 3))))
+    tree.NumNodes += size_increase
+
+    return size_increase
