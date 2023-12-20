@@ -839,6 +839,8 @@ def ColumnDensity(
         6-ray grid and other numbers sampling random directions
         OPTION 3: Give a (N_rays,3) array of vectors specifying the
         directions, which will be automatically normalized.
+    healpix: int, optional
+        Use healpix ray grid with specified resolution level NSIDE
     randomize_rays: bool, optional
         Randomize the orientation of the ray-grid *for each particle*
     parallel: bool, optional
