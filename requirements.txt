@@ -1,3 +1,4 @@
+healpy
 numba
 numpy
 scipy

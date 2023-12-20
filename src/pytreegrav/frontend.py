@@ -1,6 +1,6 @@
 import numpy as np
-from numba import njit, prange
-from numpy import zeros_like, sqrt
+import healpy as hp
+from numpy import zeros_like, zeros
 from .kernel import *
 from .octree import *
 from .dynamic_tree import *
@@ -24,7 +24,13 @@ def valueTestMethod(method):
 
 
 def ConstructTree(
-    pos, m, softening=None, quadrupole=False, vel=None, compute_moments=True
+    pos,
+    m=None,
+    softening=None,
+    quadrupole=False,
+    vel=None,
+    compute_moments=True,
+    morton_order=True,
 ):
     """Builds a tree containing particle data, for subsequent potential/field evaluation
 
@@ -32,8 +38,8 @@ def ConstructTree(
     ----------
     pos: array_like
         shape (N,3) array of particle positions
-    m: array_like
-        shape (N,) array of particle masses
+    m: array_like or None, optional
+        shape (N,) array of particle masses - if None then zeros will be used (e.g. if all you need the tree for is spatial algorithms)
     softening: array_like or None, optional
         shape (N,) array of particle softening lengths - these give the radius of compact support of the M4 cubic spline mass distribution of each particle
     quadrupole: bool, optional
@@ -46,6 +52,9 @@ def ConstructTree(
     tree: octree
         Octree instance built from particle data
     """
+    if m is None:
+        m = zeros(len(pos))
+        compute_moments = False
     if softening is None:
         softening = zeros_like(m)
     if not (
@@ -57,9 +66,15 @@ def ConstructTree(
             "Invalid input detected - aborting treebuild to avoid going into an infinite loop!"
         )
         raise
+
     if vel is None:
         return Octree(
-            pos, m, softening, quadrupole=quadrupole, compute_moments=compute_moments
+            pos,
+            m,
+            softening,
+            quadrupole=quadrupole,
+            compute_moments=compute_moments,
+            morton_order=morton_order,
         )
     else:
         return DynamicOctree(pos, m, softening, vel, quadrupole=quadrupole)
@@ -222,9 +237,9 @@ def PotentialTarget(
         raise ValueError("Must pass either pos_source & m_source or source tree.")
 
     if softening_target is None:
-        softening_target = np.zeros(len(pos_target))
+        softening_target = zeros(len(pos_target))
     if softening_source is None and pos_source is not None:
-        softening_source = np.zeros(len(pos_source))
+        softening_source = zeros(len(pos_source))
 
     # figure out which method to use
     if method == "adaptive":
@@ -444,9 +459,9 @@ def AccelTarget(
         raise ValueError("Must pass either pos_source & m_source or source tree.")
 
     if softening_target is None:
-        softening_target = np.zeros(len(pos_target))
+        softening_target = zeros(len(pos_target))
     if softening_source is None and pos_source is not None:
-        softening_source = np.zeros(len(pos_source))
+        softening_source = zeros(len(pos_source))
 
     # figure out which method to use
     if method == "adaptive":
@@ -795,6 +810,7 @@ def ColumnDensity(
     radii,
     rays=None,
     randomize_rays=False,
+    healpix=False,
     tree=None,
     theta=0.5,
     return_tree=False,
@@ -819,7 +835,8 @@ def ColumnDensity(
     rays: optional
         Which ray directions to raytrace the columns.
         None: use the angular-binned column density method with 6 bins on the sky
-        OPTION 2: Integer number: use this many rays, with 6 usingthe standard 6-ray grid and other numbers sampling random direections
+        OPTION 2: Integer number: use this many rays, with 6 using the standard
+        6-ray grid and other numbers sampling random directions
         OPTION 3: Give a (N_rays,3) array of vectors specifying the
         directions, which will be automatically normalized.
     randomize_rays: bool, optional
@@ -866,6 +883,11 @@ def ColumnDensity(
         rays = np.copy(rays)  # so that we don't overwrite the argument
     elif rays is not None:
         raise Exception("rays argument type is not supported")
+
+    if healpix:
+        nside = healpix
+        npix = hp.nside2npix(nside)
+        rays = np.array(hp.pix2vec(nside, np.arange(npix))).T
 
     if rays is not None:
         rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
