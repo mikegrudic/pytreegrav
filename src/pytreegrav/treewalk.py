@@ -958,8 +958,10 @@ def ColumnDensityWalk_binned(pos, tree, theta=0.5, no=-1):
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
 
-    column = np.zeros(6)
+    n_bins = 6
+    column = np.zeros(n_bins)
     dx = np.empty(3, dtype=np.float64)
+    angular_bin_size = (4 * np.pi) / n_bins
 
     while no > -1:
         r2 = 0
@@ -971,16 +973,26 @@ def ColumnDensityWalk_binned(pos, tree, theta=0.5, no=-1):
         h = h_no
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
             # add the particle's column if it's in the right direction
-            column[angular_bin(dx)] += tree.Masses[no] / (r2 + h * h)
+            bin = angular_bin(dx)
+            if r2 > h * h:
+                col_bin = tree.Masses[no] / r2 / angular_bin_size
+            else:  # interpolate between full overlap case and no overlap
+                col0 = tree.Masses[no] * (3 / (4 * np.pi * h * h))
+                fac = sqrt(r2) / h  # 0 to 1 when there is overlap
+                col_bin = col0 * fac * 2
+                col_isotropic = (1 - fac) * col0
+                for k in range(n_bins):
+                    column[k] += col_isotropic
+            column[bin] += col_bin
             no = tree.NextBranch[no]
         elif acceptance_criterion(
             sqrt(r2), h, tree.Sizes[no], tree.Deltas[no], theta
         ):  # we can put the whole node in a bin
-            column[angular_bin(dx)] += tree.Masses[no] / r2
+            column[angular_bin(dx)] += tree.Masses[no] / r2 / angular_bin_size
             no = tree.NextBranch[no]
         else:
             no = tree.FirstSubnode[no]
-    return column * 6 / (4 * np.pi)
+    return column
 
 
 def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=0.7):
