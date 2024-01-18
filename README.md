@@ -176,3 +176,11 @@ columns_custom = ColumnDensity(x, m, h, rays=np.random.normal(size=(100,3)), par
 Σ_eff = 𝛕_eff / κ # effective column density *for this opacity* in code mass/code length^2
 NH_eff = Σ_eff X_H / m_p  # column density in H nuclei code length^-2
 ```
+
+# Community
+
+This code is actively developed and maintained by Mike Grudic.
+
+If you would like help using pytreegrav, please ask a question on our [Discussions](https://github.com/mikegrudic/pytreegrav/discussions) page.
+
+If you have found a bug or an issue using pytreegrav, please open an [issue](https://github.com/mikegrudic/pytreegrav/issues).
