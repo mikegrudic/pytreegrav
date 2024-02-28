@@ -1,21 +1,23 @@
 <!DOCTYPE html>
-<html class="writer-html5" lang="en" >
+<html class="writer-html5" lang="en" data-content_root="./">
 <head>
-  <meta charset="utf-8" /><meta name="generator" content="Docutils 0.18.1: http://docutils.sourceforge.net/" />
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>API Documentation &mdash; pytreegrav 1.2.1 documentation</title>
-      <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
-      <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=19f00094" />
+
+  
   <!--[if lt IE 9]>
     <script src="_static/js/html5shiv.min.js"></script>
   <![endif]-->
   
-        <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
-        <script src="_static/jquery.js"></script>
-        <script src="_static/underscore.js"></script>
-        <script src="_static/_sphinx_javascript_frameworks_compat.js"></script>
-        <script src="_static/doctools.js"></script>
+        <script src="_static/jquery.js?v=5d32c60e"></script>
+        <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script src="_static/documentation_options.js?v=ca842793"></script>
+        <script src="_static/doctools.js?v=888ff710"></script>
+        <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="_static/js/theme.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
@@ -76,7 +78,7 @@
            <div itemprop="articleBody">
              
   <section id="api-documentation">
-<h1>API Documentation<a class="headerlink" href="#api-documentation" title="Permalink to this heading"></a></h1>
+<h1>API Documentation<a class="headerlink" href="#api-documentation" title="Link to this heading"></a></h1>
 <dl class="py function">
 <dt class="sig sig-object py">
 <span class="sig-prename descclassname"><span class="pre">pytreegrav.frontend.</span></span><span class="sig-name descname"><span class="pre">Accel</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pos</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">m</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">softening</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">G</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">theta</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.7</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tree</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_tree</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">method</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'adaptive'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quadrupole</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span></dt>
@@ -139,10 +141,10 @@
 
 <dl class="py function">
 <dt class="sig sig-object py">
-<span class="sig-prename descclassname"><span class="pre">pytreegrav.frontend.</span></span><span class="sig-name descname"><span class="pre">ColumnDensity</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pos</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">m</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">radii</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rays</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">randomize_rays</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tree</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">theta</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_tree</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span></dt>
-<dd><p>Ray-traced column density calculation.</p>
-<p>Returns the column density from the position of each particle integrated to
-infinity, assuming the particles are represented by uniform spheres. Note
+<span class="sig-prename descclassname"><span class="pre">pytreegrav.frontend.</span></span><span class="sig-name descname"><span class="pre">ColumnDensity</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pos</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">m</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">radii</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rays</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">randomize_rays</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">healpix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tree</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">theta</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">return_tree</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span></dt>
+<dd><p>Ray-traced or angle-binned column density calculation.</p>
+<p>Returns an estimate of the column density from the position of each particle
+integrated to infinity, assuming the particles are represented by uniform spheres. Note
 that optical depth can be obtained by supplying “sigma = opacity * mass” in
 place of mass, useful in situations where opacity is highly variable.</p>
 <dl class="field-list simple">
@@ -152,17 +154,19 @@ place of mass, useful in situations where opacity is highly variable.</p>
 <li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
 <li><p><strong>radii</strong> (<em>array_like</em>) – shape (N,) array containing particle radii of the uniform spheres that
 we use to model the particles’ mass distribution</p></li>
-<li><p><strong>rays</strong> (<em>bool</em><em>, </em><em>optional</em>) – Which ray directions to raytrace the columns. DEFAULT: The simple
-6-ray grid.
-OPTION 2: Give a (N_rays,3) array of vectors specifying the
-directions, which will be automatically normalized.
-OPTION 3: Give an integer number N to generate a raygrid of N random
-directions.</p></li>
+<li><p><strong>rays</strong> (<em>optional</em>) – Which ray directions to raytrace the columns.
+None: use the angular-binned column density method with 6 bins on the sky
+OPTION 2: Integer number: use this many rays, with 6 using the standard
+6-ray grid and other numbers sampling random directions
+OPTION 3: Give a (N_rays,3) array of vectors specifying the
+directions, which will be automatically normalized.</p></li>
+<li><p><strong>healpix</strong> (<em>int</em><em>, </em><em>optional</em>) – Use healpix ray grid with specified resolution level NSIDE</p></li>
 <li><p><strong>randomize_rays</strong> (<em>bool</em><em>, </em><em>optional</em>) – Randomize the orientation of the ray-grid <em>for each particle</em></p></li>
 <li><p><strong>parallel</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, will parallelize the column density over all available cores.
 (default False)</p></li>
 <li><p><strong>tree</strong> (<a class="reference internal" href="pytreegrav.html#pytreegrav.octree.Octree" title="pytreegrav.octree.Octree"><em>Octree</em></a><em>, </em><em>optional</em>) – optional pre-generated Octree: this can contain any set of particles,
 not necessarily the target particles at pos (default None)</p></li>
+<li><p><strong>theta</strong> (<em>float</em><em>, </em><em>optional</em>) – Opening angle for beam-traced angular bin estimator</p></li>
 <li><p><strong>return_tree</strong> (<em>bool</em><em>, </em><em>optional</em>) – return the tree used for future use (default False)</p></li>
 </ul>
 </dd>
@@ -178,13 +182,13 @@ centers integrated along the rays</p>
 
 <dl class="py function">
 <dt class="sig sig-object py">
-<span class="sig-prename descclassname"><span class="pre">pytreegrav.frontend.</span></span><span class="sig-name descname"><span class="pre">ConstructTree</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pos</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">m</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">softening</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quadrupole</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_moments</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span></dt>
+<span class="sig-prename descclassname"><span class="pre">pytreegrav.frontend.</span></span><span class="sig-name descname"><span class="pre">ConstructTree</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">pos</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">m</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">softening</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">quadrupole</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vel</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_moments</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">morton_order</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span></dt>
 <dd><p>Builds a tree containing particle data, for subsequent potential/field evaluation</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>pos</strong> (<em>array_like</em>) – shape (N,3) array of particle positions</p></li>
-<li><p><strong>m</strong> (<em>array_like</em>) – shape (N,) array of particle masses</p></li>
+<li><p><strong>m</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of particle masses - if None then zeros will be used (e.g. if all you need the tree for is spatial algorithms)</p></li>
 <li><p><strong>softening</strong> (<em>array_like</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – shape (N,) array of particle softening lengths - these give the radius of compact support of the M4 cubic spline mass distribution of each particle</p></li>
 <li><p><strong>quadrupole</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to store quadrupole moments (default False)</p></li>
 <li><p><strong>vel</strong> (<em>bool</em><em>, </em><em>optional</em>) – Whether to store node velocities in the tree (default False)</p></li>
