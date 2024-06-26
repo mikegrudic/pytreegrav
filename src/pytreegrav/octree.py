@@ -48,7 +48,7 @@ octant_offsets = 0.25 * np.array(
 
 
 @jitclass(spec)
-class Octree(object):
+class Octree:
     """Octree implementation."""
 
     def __init__(
@@ -279,7 +279,7 @@ def increase_tree_size(tree, fac=1.2):
     """Reallocate the tree data with storage increased by factor fac"""
     old_size = tree.NumNodes
     size_increase = max(int(old_size * fac + 1) - old_size, 1)
-    print("Increasing size of node list by ", size_increase)  # by %g" % fac)
+    #    print("Increasing size of node list by ", size_increase)  # by %g" % fac)
 
     tree.Sizes = concatenate((tree.Sizes, zeros(size_increase)))
     tree.Deltas = concatenate((tree.Deltas, zeros(size_increase)))

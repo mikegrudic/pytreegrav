@@ -3,3 +3,4 @@ numba
 numpy
 scipy
 pytest
+pyerfa>=2.0.1.4
