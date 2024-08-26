@@ -21,6 +21,6 @@ def test_answer():
     print("RMS force error: ", acc_error)
     phi_error = np.std(phi_tree - phi_bruteforce)
     print("RMS potential error: ", phi_error)
-
+    np.save("phi_error.npy",phi_tree-phi_bruteforce)
     assert acc_error < 0.02
     assert phi_error < 0.02

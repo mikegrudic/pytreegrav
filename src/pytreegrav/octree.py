@@ -1,18 +1,9 @@
-from numba import (
-    int32,
-    deferred_type,
-    optional,
-    float64,
-    boolean,
-    int64,
-    njit,
-    jit,
-    prange,
-    types,
-)
-from numba.experimental import jitclass
+"""Implementation of the Octree jitclass"""
+
 import numpy as np
-from numpy import empty, empty_like, zeros, zeros_like, sqrt, ones, concatenate
+from numpy import zeros, ones, concatenate
+from numba import float64, boolean, int64, njit
+from numba.experimental import jitclass
 
 spec = [
     ("Sizes", float64[:]),  # side length of tree nodes
