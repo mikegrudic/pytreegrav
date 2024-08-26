@@ -1,5 +1,5 @@
 import numpy as np
-#import healpy as hp
+import warnings
 from numpy import zeros_like, zeros
 from .kernel import *
 from .octree import *
@@ -21,6 +21,35 @@ def valueTestMethod(method):
         raise ValueError(
             "Invalid method %s. Must be one of: %s" % (method, str(methods))
         )
+
+
+def warn_if_nonunique_positions(pos, softening=None):
+    """Checks whether a potential/field calculation will return undefined values
+    and warns the user if so.
+    """
+
+    unique_positions = True
+    for i in range(pos.shape[1]):
+        if np.unique(pos[:, i]).size < pos.shape[0]:
+            unique_positions = False
+            break
+
+    if unique_positions:
+        return
+
+    if softening is not None:
+        if np.any(softening > 0):
+            warnings.warn(
+                "Warning: Particle positions are non-unique. Softening will \
+                    determine the answer for overlapping particles."
+            )
+            return
+
+    warnings.warn(
+        "Warning: Particle positions are non-unique. The answer will be singular \
+            or garbage for overlapping particles."
+    )
+    return
 
 
 def ConstructTree(
@@ -52,6 +81,9 @@ def ConstructTree(
     tree: octree
         Octree instance built from particle data
     """
+
+    warn_if_nonunique_positions(pos, softening)
+
     if m is None:
         m = zeros(len(pos))
         compute_moments = False
