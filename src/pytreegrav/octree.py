@@ -75,6 +75,9 @@ class Octree:
             ComputeMoments(self, self.NumParticles, children)
 
     def BuildTree(self, points, masses, softening):
+        # initialize random seed in case of non-unique positions
+        np.random.seed(42)
+
         self.Initialize(len(points), self.NumNodes)
 
         # set the properties of the root node
