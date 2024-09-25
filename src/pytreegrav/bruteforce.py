@@ -26,7 +26,7 @@ def PotentialTarget_bruteforce(
     for i in prange(x_target.shape[0]):
         for j in range(x_source.shape[ 0]):
             for k in range(3):  
-                dx[k] = x_target [i, k] - x_source[j, k]
+                dx[k] = x_target [i, k] - x_source[j, k] 
             r = sqrt(dx[0] * dx[0] + dx[1] * dx[1] + dx[2] * dx[2])
 
             h = max(softening_source[j], softening_target[i])
