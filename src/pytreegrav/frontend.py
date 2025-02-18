@@ -18,9 +18,7 @@ def valueTestMethod(method):
 
     ## check if method is a valid method
     if method not in methods:
-        raise ValueError(
-            "Invalid method %s. Must be one of: %s" % (method, str(methods))
-        )
+        raise ValueError("Invalid method %s. Must be one of: %s" % (method, str(methods)))
 
 
 def warn_if_nonunique_positions(pos, softening=None):
@@ -89,14 +87,8 @@ def ConstructTree(
         compute_moments = False
     if softening is None:
         softening = zeros_like(m)
-    if not (
-        np.all(np.isfinite(pos))
-        and np.all(np.isfinite(m))
-        and np.all(np.isfinite(softening))
-    ):
-        print(
-            "Invalid input detected - aborting treebuild to avoid going into an infinite loop!"
-        )
+    if not (np.all(np.isfinite(pos)) and np.all(np.isfinite(m)) and np.all(np.isfinite(softening))):
+        print("Invalid input detected - aborting treebuild to avoid going into an infinite loop!")
         raise
 
     if vel is None:
@@ -192,13 +184,9 @@ def Potential(
         h_sorted = np.take(softening, idx)
 
         if parallel:
-            phi = PotentialTarget_tree_parallel(
-                pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole
-            )
+            phi = PotentialTarget_tree_parallel(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
         else:
-            phi = PotentialTarget_tree(
-                pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole
-            )
+            phi = PotentialTarget_tree(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
 
         # now reorder phi back to the order of the input positions
         phi = np.take(phi, idx.argsort())
@@ -414,13 +402,9 @@ def Accel(
         h_sorted = np.take(softening, idx)
 
         if parallel:
-            g = AccelTarget_tree_parallel(
-                pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole
-            )
+            g = AccelTarget_tree_parallel(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
         else:
-            g = AccelTarget_tree(
-                pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole
-            )
+            g = AccelTarget_tree(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
 
         # now g is in the tree-order: reorder it back to the original order
         g = np.take(g, idx.argsort(), axis=0)
@@ -603,15 +587,11 @@ def DensityCorrFunc(
 
     if rbins is None:
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
-        rbins = 10 ** np.linspace(
-            np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3))
-        )
+        rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
     if tree is None:
         softening = np.zeros_like(m)
-        tree = ConstructTree(
-            np.float64(pos), np.float64(m), np.float64(softening)
-        )  # build the tree if needed
+        tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening))  # build the tree if needed
     idx = tree.TreewalkIndices
 
     # sort by the order they appear in the treewalk to improve access pattern efficiency
@@ -694,15 +674,11 @@ def VelocityCorrFunc(
 
     if rbins is None:
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
-        rbins = 10 ** np.linspace(
-            np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3))
-        )
+        rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
     if tree is None:
         softening = np.zeros_like(m)
-        tree = ConstructTree(
-            np.float64(pos), np.float64(m), np.float64(softening), vel=v
-        )  # build the tree if needed
+        tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening), vel=v)  # build the tree if needed
     idx = tree.TreewalkIndices
 
     # sort by the order they appear in the treewalk to improve access pattern efficiency
@@ -790,15 +766,11 @@ def VelocityStructFunc(
 
     if rbins is None:
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
-        rbins = 10 ** np.linspace(
-            np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3))
-        )
+        rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
     if tree is None:
         softening = np.zeros_like(m)
-        tree = ConstructTree(
-            np.float64(pos), np.float64(m), np.float64(softening), vel=v
-        )  # build the tree if needed
+        tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening), vel=v)  # build the tree if needed
     idx = tree.TreewalkIndices
 
     # sort by the order they appear in the treewalk to improve access pattern efficiency
@@ -927,13 +899,9 @@ def ColumnDensity(
         rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
 
     if parallel:
-        columns = ColumnDensity_tree_parallel(
-            pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta
-        )
+        columns = ColumnDensity_tree_parallel(pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta)
     else:
-        columns = ColumnDensity_tree(
-            pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta
-        )
+        columns = ColumnDensity_tree(pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta)
     if np.any(np.isnan(columns)):
         print("WARNING some column densities are NaN!")
     columns = np.take(columns, idx.argsort(), axis=0)

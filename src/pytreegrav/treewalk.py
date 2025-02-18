@@ -8,9 +8,7 @@ from scipy.spatial.transform import Rotation as R
 
 
 @njit(fastmath=True)
-def acceptance_criterion(
-    r: float, h: float, size: float, delta: float, theta: float
-) -> bool:
+def acceptance_criterion(r: float, h: float, size: float, delta: float, theta: float) -> bool:
     """Criterion for accepting the multipole approximation for summing the contribution of a node"""
     return r > max(size / theta + delta, h + size * 0.6 + delta)
 
@@ -184,9 +182,7 @@ def AccelWalk(pos, tree, softening=0, no=-1, theta=0.7):
 
 
 @njit(fastmath=True)
-def AccelWalk_quad(
-    pos, tree, softening=0, no=-1, theta=0.7
-):  # ,include_self_potential=False):
+def AccelWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):  # ,include_self_potential=False):
     """Returns the gravitational acceleration field at position x by performing the Barnes-Hut treewalk using the provided octree instance. Uses the quadrupole expansion.
     Arguments:
     pos - (3,) array containing position of interest
@@ -244,9 +240,7 @@ def AccelWalk_quad(
     return g
 
 
-def PotentialTarget_tree(
-    pos_target, softening_target, tree, G=1.0, theta=0.7, quadrupole=False
-):
+def PotentialTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, quadrupole=False):
     """Returns the gravitational potential at the specified points, given a tree containing the mass distribution
     Arguments:
     pos_target -- shape (N,3) array of positions at which to evaluate the potential
@@ -262,14 +256,10 @@ def PotentialTarget_tree(
     set_parallel_chunksize(10000)
     if quadrupole:
         for i in prange(pos_target.shape[0]):
-            result[i] = G * PotentialWalk_quad(
-                pos_target[i], tree, softening=softening_target[i], theta=theta
-            )
+            result[i] = G * PotentialWalk_quad(pos_target[i], tree, softening=softening_target[i], theta=theta)
     else:
         for i in prange(pos_target.shape[0]):
-            result[i] = G * PotentialWalk(
-                pos_target[i], tree, softening=softening_target[i], theta=theta
-            )
+            result[i] = G * PotentialWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
     return result
 
 
@@ -278,9 +268,7 @@ PotentialTarget_tree_parallel = njit(PotentialTarget_tree, fastmath=True, parall
 PotentialTarget_tree = njit(PotentialTarget_tree, fastmath=True)
 
 
-def AccelTarget_tree(
-    pos_target, softening_target, tree, G=1.0, theta=0.7, quadrupole=False
-):
+def AccelTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, quadrupole=False):
     """Returns the gravitational acceleration at the specified points, given a tree containing the mass distribution
     Arguments:
     pos_target -- shape (N,3) array of positions at which to evaluate the field
@@ -298,14 +286,10 @@ def AccelTarget_tree(
     set_parallel_chunksize(10000)
     if quadrupole:
         for i in prange(pos_target.shape[0]):
-            result[i] = G * AccelWalk_quad(
-                pos_target[i], tree, softening=softening_target[i], theta=theta
-            )
+            result[i] = G * AccelWalk_quad(pos_target[i], tree, softening=softening_target[i], theta=theta)
     else:
         for i in prange(pos_target.shape[0]):
-            result[i] = G * AccelWalk(
-                pos_target[i], tree, softening=softening_target[i], theta=theta
-            )
+            result[i] = G * AccelWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
     return result
 
 
@@ -322,13 +306,9 @@ def do_weighted_binning(tree, no, rbins, mbin, r, r_idx, quantity):
         mbin[r_idx] += tree.Masses[no] * quantity
     else:
         min_bin = int((np.log10((r - h) / rbins[0]) / np.log10(rbins[1] / rbins[0])))
-        max_bin = min(
-            int(np.log10((r + h) / rbins[0]) / np.log10(rbins[1] / rbins[0]) + 1), Nbins
-        )
+        max_bin = min(int(np.log10((r + h) / rbins[0]) / np.log10(rbins[1] / rbins[0]) + 1), Nbins)
         total_wt = 0
-        for i in range(
-            min_bin, max_bin
-        ):  # range(min_bin,max_bin): # first the prepass to get the total weight
+        for i in range(min_bin, max_bin):  # range(min_bin,max_bin): # first the prepass to get the total weight
             # (r > rbins[i] and r < rbins[i+1]) or dr < 0.5*tree.Sizes[no]:
             i1, i2 = max(r - h, rbins[i]), min(r + h, rbins[i + 1])
             overlap = i2 - i1
@@ -408,9 +388,7 @@ def DensityCorrWalk(
                     tree.Sizes[no] / theta + tree.Deltas[no],
                     tree.Sizes[no] * 0.6 + tree.Deltas[no],
                 )
-            ) and (
-                tree.Sizes[no] < max_bin_size_ratio * (rbins[r_idx + 1] - rbins[r_idx])
-            ):
+            ) and (tree.Sizes[no] < max_bin_size_ratio * (rbins[r_idx + 1] - rbins[r_idx])):
                 if weighted_binning:
                     do_weighted_binning(tree, no, rbins, mbin, r, r_idx, 1)
                 else:
@@ -541,9 +519,7 @@ def VelocityCorrWalk(
             elif r > max(
                 tree.Sizes[no] / theta + tree.Deltas[no],
                 tree.Sizes[no] * 0.6 + tree.Deltas[no],
-            ) and tree.Sizes[no] < max_bin_size_ratio * (
-                rbins[r_idx + 1] - rbins[r_idx]
-            ):
+            ) and tree.Sizes[no] < max_bin_size_ratio * (rbins[r_idx + 1] - rbins[r_idx]):
                 vprod = 0
                 for k in range(3):
                     vprod += vel[k] * tree.Velocities[no][k]
@@ -618,9 +594,7 @@ def VelocityCorrFunc_tree(
 
 
 # JIT this function and its parallel version
-VelocityCorrFunc_tree_parallel = njit(
-    VelocityCorrFunc_tree, fastmath=True, parallel=True
-)
+VelocityCorrFunc_tree_parallel = njit(VelocityCorrFunc_tree, fastmath=True, parallel=True)
 VelocityCorrFunc_tree = njit(VelocityCorrFunc_tree, fastmath=True)
 
 
@@ -678,25 +652,17 @@ def VelocityStructWalk(
             if no < tree.NumParticles:
                 vprod = 0
                 for k in range(3):
-                    vprod += (
-                        (vel[k] - tree.Velocities[no][k])
-                        * (vel[k] - tree.Velocities[no][k])
-                        * tree.Masses[no]
-                    )
+                    vprod += (vel[k] - tree.Velocities[no][k]) * (vel[k] - tree.Velocities[no][k]) * tree.Masses[no]
                 binsums[r_idx] += vprod
                 wtsums[r_idx] += tree.Masses[no]
                 no = tree.NextBranch[no]
             elif r > max(
                 tree.Sizes[no] / theta + tree.Deltas[no],
                 tree.Sizes[no] * 0.6 + tree.Deltas[no],
-            ) and (
-                tree.Sizes[no] < max_bin_size_ratio * (rbins[r_idx + 1] - rbins[r_idx])
-            ):
+            ) and (tree.Sizes[no] < max_bin_size_ratio * (rbins[r_idx + 1] - rbins[r_idx])):
                 vprod = 0
                 for k in range(3):
-                    vprod += (vel[k] - tree.Velocities[no][k]) * (
-                        vel[k] - tree.Velocities[no][k]
-                    )
+                    vprod += (vel[k] - tree.Velocities[no][k]) * (vel[k] - tree.Velocities[no][k])
                 vprod += tree.VelocityDisp[no]
                 if weighted_binning:
                     do_weighted_binning(tree, no, rbins, binsums, r, r_idx, vprod)
@@ -770,9 +736,7 @@ def VelocityStructFunc_tree(
 
 
 # JIT this function and its parallel version
-VelocityStructFunc_tree_parallel = njit(
-    VelocityStructFunc_tree, fastmath=True, parallel=True
-)
+VelocityStructFunc_tree_parallel = njit(VelocityStructFunc_tree, fastmath=True, parallel=True)
 VelocityStructFunc_tree = njit(VelocityStructFunc_tree, fastmath=True)
 
 
@@ -797,9 +761,7 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
     N_rays = rays.shape[0]
     columns = np.zeros(N_rays)
     dx = np.empty(3, dtype=np.float64)
-    z_ray = np.zeros(
-        N_rays
-    )  # perpendicular distances of elements to nearest point on rays
+    z_ray = np.zeros(N_rays)  # perpendicular distances of elements to nearest point on rays
 
     fac_density = 3 / (4 * np.pi)
 
@@ -817,9 +779,7 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
 
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
             # add the particle's column if it's in the right direction
-            fac = (
-                fac_density * tree.Masses[no] * h_no_inv * h_no_inv
-            )  # assumes uniform sphere geometry
+            fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv  # assumes uniform sphere geometry
             for i in range(N_rays):
                 r_proj = r2 - z_ray[i] * z_ray[i]
                 if r_proj < 0:
@@ -827,9 +787,7 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
                 r_proj = sqrt(r2 - z_ray[i] * z_ray[i])
                 q = r_proj * h_no_inv
                 if r_proj < h_no:
-                    if (
-                        r > h_no
-                    ):  # not overlapping the target point - integrate the whole cell
+                    if r > h_no:  # not overlapping the target point - integrate the whole cell
                         if z_ray[i] < 0:
                             continue  # not on the ray
                         columns[i] += fac * 2 * sqrt(1 - q * q)
@@ -845,14 +803,11 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
                 tree.Sizes[no] * 0.8660254037844386 + tree.Deltas[no]
             )  # effective search radius from center of mass
             for i in range(N_rays):
-                if (
-                    r < h + R_eff
-                ):  # if node contains the origin then it must intersect all rays
+                if r < h + R_eff:  # if node contains the origin then it must intersect all rays
                     node_intersects_ray = True
                     break
                 elif (z_ray[i] > 0) and (
-                    (r2 - z_ray[i] * z_ray[i])
-                    < (tree.Softenings[no] + R_eff) * (tree.Softenings[no] + R_eff)
+                    (r2 - z_ray[i] * z_ray[i]) < (tree.Softenings[no] + R_eff) * (tree.Softenings[no] + R_eff)
                 ):  # if perpendicular distance is less than node effective size
                     node_intersects_ray = True
                     break
@@ -860,9 +815,7 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
             if node_intersects_ray:
                 no = tree.FirstSubnode[no]  # open the node
             else:
-                no = tree.NextBranch[
-                    no
-                ]  # no intersection with any way, so go to next node
+                no = tree.NextBranch[no]  # no intersection with any way, so go to next node
 
     return columns
 
@@ -911,9 +864,7 @@ def ColumnDensityWalk_singleray(pos, ray, tree, no=-1):
             r_proj = sqrt(r2 - z_ray * z_ray)
             q = r_proj * h_no_inv
             if r_proj < h_no:
-                if (
-                    r > h_no
-                ):  # not overlapping the target point - integrate the whole cell
+                if r > h_no:  # not overlapping the target point - integrate the whole cell
                     if z_ray > 0:
                         column += fac * 2 * sqrt(1 - q * q)
                 else:  # overlapping, so need to integrate only a portion of the cell - this case includes the self-shielding if the point is in the tree!
@@ -929,8 +880,7 @@ def ColumnDensityWalk_singleray(pos, ray, tree, no=-1):
                 # if node contains the origin then it must intersect all rays
                 node_intersects_ray = True
             elif (z_ray > 0) and (
-                (r2 - z_ray * z_ray)
-                < (tree.Softenings[no] + R_eff) * (tree.Softenings[no] + R_eff)
+                (r2 - z_ray * z_ray) < (tree.Softenings[no] + R_eff) * (tree.Softenings[no] + R_eff)
             ):  # if perpendicular distance is less than node effective size
                 node_intersects_ray = True
 

@@ -60,20 +60,14 @@ octant_offsets = 0.25 * np.array(
 class DynamicOctree(object):
     """Octree implementation that stores node velocities for correlation functions and dynamic updates."""
 
-    def __init__(
-        self, points, masses, softening, vels, morton_order=True, quadrupole=False
-    ):
+    def __init__(self, points, masses, softening, vels, morton_order=True, quadrupole=False):
         self.TreewalkIndices = -ones(points.shape[0], dtype=np.int64)
         self.HasQuads = quadrupole
         children = self.BuildTree(
             points, masses, softening, vels
         )  # first provisional treebuild to get the ordering right
-        SetupTreewalk(
-            self, self.NumParticles, children
-        )  # set up the order of the treewalk
-        ComputeMomentsDynamic(
-            self, self.NumParticles, children
-        )  # compute centers of mass, etc.
+        SetupTreewalk(self, self.NumParticles, children)  # set up the order of the treewalk
+        ComputeMomentsDynamic(self, self.NumParticles, children)  # compute centers of mass, etc.
         self.GetWalkIndices()  # get the Morton ordering of the points
 
         if (
@@ -85,13 +79,9 @@ class DynamicOctree(object):
                 np.take(softening, self.TreewalkIndices),
                 vels[self.TreewalkIndices],
             )  # now re-build the tree with everything in order
-            SetupTreewalk(
-                self, self.NumParticles, children
-            )  # re-do the treewalk order with the new indices
+            SetupTreewalk(self, self.NumParticles, children)  # re-do the treewalk order with the new indices
 
-        ComputeMomentsDynamic(
-            self, self.NumParticles, children
-        )  # compute centers of mass, etc.
+        ComputeMomentsDynamic(self, self.NumParticles, children)  # compute centers of mass, etc.
 
     def BuildTree(self, points, masses, softening, vels):
         # initialize all attributes
@@ -122,9 +112,7 @@ class DynamicOctree(object):
             points[:, 2].max() - points[:, 2].min(),
         )
         for dim in range(3):
-            self.Coordinates[self.NumParticles, dim] = 0.5 * (
-                points[:, dim].max() + points[:, dim].min()
-            )
+            self.Coordinates[self.NumParticles, dim] = 0.5 * (points[:, dim].max() + points[:, dim].min())
 
         # set values for particles
         self.Coordinates[: self.NumParticles] = points
@@ -147,24 +135,17 @@ class DynamicOctree(object):
 
                 # check if there is a pre-existing node among the present node's children
                 child_candidate = children[no, octant]
-                if (
-                    child_candidate > -1
-                ):  # it exists, now check if it's a node or a particle
+                if child_candidate > -1:  # it exists, now check if it's a node or a particle
                     if (
                         child_candidate < self.NumParticles
                     ):  # it's a particle - we have to create a new node of index new_node_idx containing the 2 points we've got, and point the pre-existing particle to the new particle
                         # EXCEPTION: if the pre-existing particle is at the same coordinate, we will perturb the position of the new particle slightly and start over
                         same_coord = True
                         for k in range(3):
-                            if (
-                                self.Coordinates[i, k]
-                                != self.Coordinates[child_candidate, k]
-                            ):
+                            if self.Coordinates[i, k] != self.Coordinates[child_candidate, k]:
                                 same_coord = False
                         if same_coord:
-                            self.Coordinates[i] *= np.exp(
-                                3e-16 * (np.random.rand(3) - 0.5)
-                            )  # random perturbation
+                            self.Coordinates[i] *= np.exp(3e-16 * (np.random.rand(3) - 0.5))  # random perturbation
                             points[i] = self.Coordinates[i]
                             no = self.NumParticles  # restart the tree traversal
                             continue
@@ -172,24 +153,18 @@ class DynamicOctree(object):
 
                         children[no, octant] = new_node_idx
                         self.Coordinates[new_node_idx] = (
-                            self.Coordinates[no]
-                            + self.Sizes[no] * octant_offsets[octant]
+                            self.Coordinates[no] + self.Sizes[no] * octant_offsets[octant]
                         )  # set the center of the new node
-                        self.Sizes[new_node_idx] = (
-                            self.Sizes[no] / 2
-                        )  # set the size of the new node
+                        self.Sizes[new_node_idx] = self.Sizes[no] / 2  # set the size of the new node
                         new_octant = 0
                         for dim in range(3):
-                            if (
-                                self.Coordinates[child_candidate, dim]
-                                > self.Coordinates[new_node_idx, dim]
-                            ):
+                            if self.Coordinates[child_candidate, dim] > self.Coordinates[new_node_idx, dim]:
                                 new_octant += (
                                     1 << dim
                                 )  # get the octant of the new node that pre-existing particle lives in
-                        children[
-                            new_node_idx, new_octant
-                        ] = child_candidate  # set the pre-existing particle as a child of the new node
+                        children[new_node_idx, new_octant] = (
+                            child_candidate  # set the pre-existing particle as a child of the new node
+                        )
                         no = new_node_idx
                         new_node_idx += 1
                         continue  # restart the loop looking at the new node
@@ -239,9 +214,7 @@ def ComputeMomentsDynamic(
         hmax = 0
         for c in children[no]:
             if c > -1:
-                hi, mi, quadi, comi, veli, vdispi = ComputeMomentsDynamic(
-                    tree, c, children
-                )
+                hi, mi, quadi, comi, veli, vdispi = ComputeMomentsDynamic(tree, c, children)
                 m += mi
                 com += mi * comi
                 vel += mi * veli
@@ -254,9 +227,7 @@ def ComputeMomentsDynamic(
         for c in children[no]:
             if c > -1:
                 dv = tree.Velocities[c] - vel
-                vdisp += tree.Masses[c] * (
-                    dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]
-                )
+                vdisp += tree.Masses[c] * (dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2])
         vdisp = vdisp / m
         if tree.HasQuads:
             for c in children[no]:
@@ -299,14 +270,12 @@ def SetupTreewalk(tree, no, children):
             continue
         #        tree.ParentNode[c] = no
         if tree.FirstSubnode[no] < 0:
-            tree.FirstSubnode[
-                no
-            ] = c  # if we haven't yet set current node's next node, do so
+            tree.FirstSubnode[no] = c  # if we haven't yet set current node's next node, do so
 
         if last_node > -1:
-            tree.NextBranch[
-                last_node
-            ] = c  # set this up to point to the next "branch" of the tree to look at if we sum the force for the current branch
+            tree.NextBranch[last_node] = (
+                c  # set this up to point to the next "branch" of the tree to look at if we sum the force for the current branch
+            )
         last_node = c
 
     # need to deal with the last child: must link it up to the sibling of the present node

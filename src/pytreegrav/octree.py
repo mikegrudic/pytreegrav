@@ -87,9 +87,7 @@ class Octree:
             points[:, 2].max() - points[:, 2].min(),
         )
         for dim in range(3):
-            self.Coordinates[self.NumParticles, dim] = 0.5 * (
-                points[:, dim].max() + points[:, dim].min()
-            )
+            self.Coordinates[self.NumParticles, dim] = 0.5 * (points[:, dim].max() + points[:, dim].min())
 
         # set values for particles
         self.Coordinates[: self.NumParticles] = points
@@ -106,9 +104,7 @@ class Octree:
                 # first make sure we have enough storage
                 while new_node_idx + 1 > self.NumNodes:
                     size_increase = increase_tree_size(self)
-                    children = concatenate(
-                        (children, -ones((size_increase, 8), dtype=np.int64))
-                    )
+                    children = concatenate((children, -ones((size_increase, 8), dtype=np.int64)))
 
                 octant = 0  # the index of the octant that the present point lives in
                 for dim in range(3):
@@ -123,15 +119,10 @@ class Octree:
                         # EXCEPTION: if the pre-existing particle is at the same coordinate, we will perturb the position of the new particle slightly and start over
                         same_coord = True
                         for k in range(3):
-                            if (
-                                self.Coordinates[i, k]
-                                != self.Coordinates[child_candidate, k]
-                            ):
+                            if self.Coordinates[i, k] != self.Coordinates[child_candidate, k]:
                                 same_coord = False
                         if same_coord:
-                            self.Coordinates[i] *= np.exp(
-                                3e-16 * (np.random.rand(3) - 0.5)
-                            )  # random perturbation
+                            self.Coordinates[i] *= np.exp(3e-16 * (np.random.rand(3) - 0.5))  # random perturbation
                             points[i] = self.Coordinates[i]
                             no = self.NumParticles  # restart the tree traversal
                             continue
@@ -139,18 +130,12 @@ class Octree:
 
                         children[no, octant] = new_node_idx
                         # set the center of the new node
-                        self.Coordinates[new_node_idx] = (
-                            self.Coordinates[no]
-                            + self.Sizes[no] * octant_offsets[octant]
-                        )
+                        self.Coordinates[new_node_idx] = self.Coordinates[no] + self.Sizes[no] * octant_offsets[octant]
                         # set the size of the new node
                         self.Sizes[new_node_idx] = self.Sizes[no] / 2
                         new_octant = 0
                         for dim in range(3):
-                            if (
-                                self.Coordinates[child_candidate, dim]
-                                > self.Coordinates[new_node_idx, dim]
-                            ):
+                            if self.Coordinates[child_candidate, dim] > self.Coordinates[new_node_idx, dim]:
                                 # get the octant of the new node that pre-existing particle lives in
                                 new_octant += 1 << dim
                         # set the pre-existing particle as a child of the new node
@@ -279,12 +264,8 @@ def increase_tree_size(tree, fac=1.2):
     tree.Deltas = concatenate((tree.Deltas, zeros(size_increase)))
     tree.Masses = concatenate((tree.Masses, zeros(size_increase)))
     tree.Softenings = concatenate((tree.Softenings, zeros(size_increase)))
-    tree.NextBranch = concatenate(
-        (tree.NextBranch, -ones(size_increase, dtype=np.int64))
-    )
-    tree.FirstSubnode = concatenate(
-        (tree.FirstSubnode, -ones(size_increase, dtype=np.int64))
-    )
+    tree.NextBranch = concatenate((tree.NextBranch, -ones(size_increase, dtype=np.int64)))
+    tree.FirstSubnode = concatenate((tree.FirstSubnode, -ones(size_increase, dtype=np.int64)))
     tree.Coordinates = concatenate((tree.Coordinates, zeros((size_increase, 3))))
     if tree.HasQuads:
         tree.Quadrupoles = concatenate((tree.Quadrupoles, zeros((size_increase, 3, 3))))

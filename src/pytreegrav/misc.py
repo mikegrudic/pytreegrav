@@ -48,8 +48,7 @@ def random_rotation(seed):
     for i in range(3):
         j, k = (i + 1) % 3, (i + 2) % 3
         rotation_matrix[2, i] = (
-            rotation_matrix[0, j] * rotation_matrix[1, k]
-            - rotation_matrix[1, j] * rotation_matrix[0, k]
+            rotation_matrix[0, j] * rotation_matrix[1, k] - rotation_matrix[1, j] * rotation_matrix[0, k]
         )
 
     return rotation_matrix
