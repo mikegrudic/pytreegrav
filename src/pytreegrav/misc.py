@@ -23,13 +23,13 @@ def random_rotation(seed):
     # generate x axis
     costheta = np.random.uniform(-1, 1)
     sintheta = sqrt(max(1 - costheta * costheta, 0))
-    phi = 2 * np.pi * np.random.uniform()
+    phi = 2 * np.pi * np.random.uniform(0,1)
     rotation_matrix[0] = sintheta * np.cos(phi), sintheta * np.sin(phi), costheta
 
     # generate independent y axis and orthogonalize
     costheta = np.random.uniform(-1, 1)
     sintheta = sqrt(max(1 - costheta * costheta, 0))
-    phi = 2 * np.pi * np.random.uniform()
+    phi = 2 * np.pi * np.random.uniform(0,1)
     rotation_matrix[1] = sintheta * np.cos(phi), sintheta * np.sin(phi), costheta
 
     sum = 0
