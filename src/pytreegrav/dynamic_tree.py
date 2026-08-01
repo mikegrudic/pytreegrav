@@ -70,9 +70,7 @@ class DynamicOctree(object):
         ComputeMomentsDynamic(self, self.NumParticles, children)  # compute centers of mass, etc.
         self.GetWalkIndices()  # get the Morton ordering of the points
 
-        if (
-            morton_order
-        ):  # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
+        if morton_order:  # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
             children = self.BuildTree(
                 points[self.TreewalkIndices],
                 np.take(masses, self.TreewalkIndices),

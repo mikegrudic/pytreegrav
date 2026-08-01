@@ -37,6 +37,96 @@ octant_offsets = 0.25 * np.array(
     ]
 )
 
+# Number of bits used per dimension in a Morton key.  3 * 21 = 63 fits in a signed int64.
+MORTON_BITS = 21
+MORTON_SCALE = float(1 << MORTON_BITS)  # 2**21
+MORTON_MAXQ = (1 << MORTON_BITS) - 1  # largest quantized coordinate
+# How many times we are willing to re-key a group of colliding points relative to their sub-cell.
+# 3 rounds -> 3*21 = 63 bits/dim of subdivision, exceeding the 52-bit float64 mantissa, so any two
+# points that differ in their floating-point representation are guaranteed to be separated.
+MORTON_MAX_ROUNDS = 3
+
+
+@njit(int64(int64), fastmath=False, cache=True)
+def _spread_bits(x):
+    """Spread the low 21 bits of x so that they occupy every third bit (bit i -> bit 3i).
+
+    Standard libmorton magic-number method for interleaving a 21-bit coordinate into a 63-bit
+    Morton key.
+    """
+    x &= 0x1FFFFF
+    x = (x | (x << 32)) & 0x1F00000000FFFF
+    x = (x | (x << 16)) & 0x1F0000FF0000FF
+    x = (x | (x << 8)) & 0x100F00F00F00F00F
+    x = (x | (x << 4)) & 0x10C30C30C30C30C3
+    x = (x | (x << 2)) & 0x1249249249249249
+    return x
+
+
+@njit(cache=True)
+def _morton_keys(points, center, size):
+    """Compute 63-bit Morton (Z-order) keys for points within the cube of given center and side.
+
+    The cube spans [center - size/2, center + size/2] in each dimension.  Coordinates are quantized
+    to MORTON_BITS bits per dimension and interleaved with x in the least-significant bit of each
+    triplet, matching the octant convention used elsewhere (octant = (x>c) + 2*(y>c) + 4*(z>c)).
+    """
+    n = points.shape[0]
+    keys = np.empty(n, dtype=np.int64)
+    inv = 1.0 / size if size > 0 else 0.0
+    cmin0 = center[0] - 0.5 * size
+    cmin1 = center[1] - 0.5 * size
+    cmin2 = center[2] - 0.5 * size
+    for i in range(n):
+        qx = int((points[i, 0] - cmin0) * inv * MORTON_SCALE)
+        qy = int((points[i, 1] - cmin1) * inv * MORTON_SCALE)
+        qz = int((points[i, 2] - cmin2) * inv * MORTON_SCALE)
+        if qx < 0:
+            qx = 0
+        elif qx > MORTON_MAXQ:
+            qx = MORTON_MAXQ
+        if qy < 0:
+            qy = 0
+        elif qy > MORTON_MAXQ:
+            qy = MORTON_MAXQ
+        if qz < 0:
+            qz = 0
+        elif qz > MORTON_MAXQ:
+            qz = MORTON_MAXQ
+        keys[i] = _spread_bits(qx) | (_spread_bits(qy) << 1) | (_spread_bits(qz) << 2)
+    return keys
+
+
+@njit(cache=True)
+def _radix_argsort(keys):
+    """Stable LSD radix sort of nonnegative int64 keys, returning the sorting permutation.
+
+    Processes 8 bits per pass (base 256), covering the 63 significant bits of a Morton key in 8
+    passes.  O(N) in the number of keys.
+    """
+    n = keys.shape[0]
+    idx = np.arange(n).astype(np.int64)
+    tmp = np.empty(n, dtype=np.int64)
+    RADIX_BITS = 8
+    RADIX = 1 << RADIX_BITS  # 256
+    mask = RADIX - 1
+    count = np.empty(RADIX + 1, dtype=np.int64)
+    shift = 0
+    while shift < 63:
+        count[:] = 0
+        for i in range(n):
+            digit = (keys[idx[i]] >> shift) & mask
+            count[digit + 1] += 1
+        for b in range(RADIX):
+            count[b + 1] += count[b]
+        for i in range(n):
+            digit = (keys[idx[i]] >> shift) & mask
+            tmp[count[digit]] = idx[i]
+            count[digit] += 1
+        idx, tmp = tmp, idx
+        shift += RADIX_BITS
+    return idx
+
 
 @jitclass(spec)
 class Octree:
@@ -50,25 +140,34 @@ class Octree:
         morton_order=True,
         quadrupole=False,
         compute_moments=True,
+        radix=True,
     ):
         self.NumNodes = 0
         self.TreewalkIndices = -ones(points.shape[0], dtype=np.int64)
         self.HasQuads = quadrupole
-        # first provisional treebuild to get the ordering right
-        children = self.BuildTree(points, masses, softening)
-        # set up the order of the treewalk
-        SetupTreewalk(self, self.NumParticles, children)
-        self.GetWalkIndices()  # get the Morton ordering of the points
 
-        # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
-        if morton_order:
-            children = self.BuildTree(
-                points[self.TreewalkIndices],
-                np.take(masses, self.TreewalkIndices),
-                np.take(softening, self.TreewalkIndices),
-            )  # now re-build the tree with everything in order
-            # re-do the treewalk order with the new indices
+        if radix and morton_order:
+            # Radix-sort build: a single linear pass over Morton-sorted points produces the tree
+            # already in Morton order, so no provisional build or GetWalkIndices pass is needed.
+            children = self.BuildTreeRadix(points, masses, softening)
             SetupTreewalk(self, self.NumParticles, children)
+        else:
+            # Legacy insertion build (used for radix=False or morton_order=False).
+            # first provisional treebuild to get the ordering right
+            children = self.BuildTree(points, masses, softening)
+            # set up the order of the treewalk
+            SetupTreewalk(self, self.NumParticles, children)
+            self.GetWalkIndices()  # get the Morton ordering of the points
+
+            # if enabled, we rebuild the tree in Morton order (the order that points are visited in the depth-first traversal)
+            if morton_order:
+                children = self.BuildTree(
+                    points[self.TreewalkIndices],
+                    np.take(masses, self.TreewalkIndices),
+                    np.take(softening, self.TreewalkIndices),
+                )  # now re-build the tree with everything in order
+                # re-do the treewalk order with the new indices
+                SetupTreewalk(self, self.NumParticles, children)
 
         if compute_moments:
             # compute centers of mass, etc.
@@ -150,6 +249,194 @@ class Octree:
                     children[no, octant] = i
                     no = -1
         return children
+
+    def BuildTreeRadix(self, points, masses, softening):
+        """Build the octree from Morton-sorted points in a single linear pass.
+
+        Computes a 63-bit Morton (Z-order) key per point, radix-sorts them, then walks the sorted
+        array top-down splitting each node's contiguous range by the 3-bit Morton digit at that
+        level.  Because the sort already yields the depth-first (Morton) ordering, the particles are
+        stored in that order and TreewalkIndices records the permutation - no second build is needed.
+
+        Returns the (NumNodes, 8) child-index array, exactly as BuildTree does.
+        """
+        N = points.shape[0]
+
+        # --- root cube: per-dimension midpoint center, side = maximum extent (matches BuildTree) ---
+        center = zeros(3)
+        size = 0.0
+        for dim in range(3):
+            lo = points[:, dim].min()
+            hi = points[:, dim].max()
+            center[dim] = 0.5 * (hi + lo)
+            if hi - lo > size:
+                size = hi - lo
+
+        # --- Morton keys + radix sort give the Morton ordering directly ---
+        keys = _morton_keys(points, center, size)
+        order = _radix_argsort(keys)
+
+        self.Initialize(N, self.NumNodes)
+        self.TreewalkIndices = order
+
+        # lay out particle data in Morton order; keys is permuted to stay aligned with the arrays
+        keys_sorted = np.empty(N, dtype=np.int64)
+        for i in range(N):
+            oi = order[i]
+            for dim in range(3):
+                self.Coordinates[i, dim] = points[oi, dim]
+            self.Masses[i] = masses[oi]
+            self.Softenings[i] = softening[oi]
+            keys_sorted[i] = keys[oi]
+
+        # set root node properties
+        root = self.NumParticles
+        self.Sizes[root] = size
+        for dim in range(3):
+            self.Coordinates[root, dim] = center[dim]
+
+        children = -ones((self.NumNodes, 8), dtype=np.int64)
+        new_node_idx = self.NumParticles + 1
+
+        # explicit stack of node ranges still to be partitioned: (node, lo, hi, shift, round)
+        # shift is the bit position of the current 3-bit Morton digit; round counts re-keyings.
+        cap = 64
+        st_node = np.empty(cap, dtype=np.int64)
+        st_lo = np.empty(cap, dtype=np.int64)
+        st_hi = np.empty(cap, dtype=np.int64)
+        st_shift = np.empty(cap, dtype=np.int64)
+        st_round = np.empty(cap, dtype=np.int64)
+        top = 0
+        st_node[0] = root
+        st_lo[0] = 0
+        st_hi[0] = N
+        st_shift[0] = 3 * (MORTON_BITS - 1)  # top digit of a fresh key
+        st_round[0] = 0
+        top = 1
+
+        while top > 0:
+            top -= 1
+            node = st_node[top]
+            lo = st_lo[top]
+            hi = st_hi[top]
+            shift = st_shift[top]
+            rnd = st_round[top]
+
+            if shift < 0:
+                # We have exhausted the current key's bits but >1 point remains in this cell.
+                if rnd >= MORTON_MAX_ROUNDS:
+                    # points are coincident to floating-point precision: park them in a bucket
+                    children, new_node_idx = self.BuildBucket(children, node, lo, hi, new_node_idx)
+                    continue
+                # re-key this group relative to the node's (sub-)cell and re-sort the slice
+                self.RekeySlice(keys_sorted, node, lo, hi)
+                shift = 3 * (MORTON_BITS - 1)
+                rnd += 1
+
+            # partition [lo, hi) by the 3-bit digit at the current shift (contiguous, since sorted)
+            i = lo
+            while i < hi:
+                d = (keys_sorted[i] >> shift) & 7
+                j = i + 1
+                while j < hi and ((keys_sorted[j] >> shift) & 7) == d:
+                    j += 1
+                if j - i == 1:  # single particle -> becomes a leaf child directly
+                    children[node, d] = i
+                else:  # >1 particle in this octant -> create a child node and recurse
+                    while new_node_idx + 1 > self.NumNodes:
+                        size_increase = increase_tree_size(self)
+                        children = concatenate((children, -ones((size_increase, 8), dtype=np.int64)))
+                    cnode = new_node_idx
+                    new_node_idx += 1
+                    for k in range(3):
+                        self.Coordinates[cnode, k] = (
+                            self.Coordinates[node, k] + self.Sizes[node] * octant_offsets[d, k]
+                        )
+                    self.Sizes[cnode] = self.Sizes[node] * 0.5
+                    children[node, d] = cnode
+                    if top >= st_node.shape[0]:  # grow the stack if needed
+                        add = st_node.shape[0]
+                        st_node = concatenate((st_node, np.empty(add, dtype=np.int64)))
+                        st_lo = concatenate((st_lo, np.empty(add, dtype=np.int64)))
+                        st_hi = concatenate((st_hi, np.empty(add, dtype=np.int64)))
+                        st_shift = concatenate((st_shift, np.empty(add, dtype=np.int64)))
+                        st_round = concatenate((st_round, np.empty(add, dtype=np.int64)))
+                    st_node[top] = cnode
+                    st_lo[top] = i
+                    st_hi[top] = j
+                    st_shift[top] = shift - 3
+                    st_round[top] = rnd
+                    top += 1
+                i = j
+
+        return children
+
+    def RekeySlice(self, keys_sorted, node, lo, hi):
+        """Recompute Morton keys for particles [lo, hi) relative to node's cell and re-sort them.
+
+        Used when a group of points collides (shares a key) at the deepest level: treating the
+        node's cell as a fresh root gives MORTON_BITS more bits of resolution per dimension.  The
+        particle data (Coordinates/Masses/Softenings/TreewalkIndices) and keys_sorted are all
+        permuted consistently so the slice stays Morton-sorted.
+        """
+        g = hi - lo
+        sub = self.Coordinates[lo:hi]
+        center = zeros(3)
+        for dim in range(3):
+            center[dim] = self.Coordinates[node, dim]
+        subkeys = _morton_keys(sub, center, self.Sizes[node])
+        perm = _radix_argsort(subkeys)
+
+        # gather the slice into temporaries in the new order, then write back
+        new_coord = zeros((g, 3))
+        new_mass = zeros(g)
+        new_soft = zeros(g)
+        new_idx = zeros(g, dtype=np.int64)
+        new_keys = zeros(g, dtype=np.int64)
+        for a in range(g):
+            p = perm[a]
+            for dim in range(3):
+                new_coord[a, dim] = self.Coordinates[lo + p, dim]
+            new_mass[a] = self.Masses[lo + p]
+            new_soft[a] = self.Softenings[lo + p]
+            new_idx[a] = self.TreewalkIndices[lo + p]
+            new_keys[a] = subkeys[p]
+        for a in range(g):
+            for dim in range(3):
+                self.Coordinates[lo + a, dim] = new_coord[a, dim]
+            self.Masses[lo + a] = new_mass[a]
+            self.Softenings[lo + a] = new_soft[a]
+            self.TreewalkIndices[lo + a] = new_idx[a]
+            keys_sorted[lo + a] = new_keys[a]
+
+    def BuildBucket(self, children, node, lo, hi, new_node_idx):
+        """Attach particles [lo, hi), coincident to float precision, as a chain of nodes under node.
+
+        Each node holds up to 8 particle children; when more remain, slot 7 links to a further node.
+        Geometry is degenerate (the points coincide) but valid, and no particle is dropped.  Returns
+        the (possibly reallocated) children array and the updated new_node_idx.
+        """
+        count = hi - lo
+        cur = node
+        slot = 0
+        for jj in range(count):
+            remaining = count - 1 - jj
+            if slot == 7 and remaining > 0:
+                # reserve slot 7 as a link to a continuation node
+                while new_node_idx + 1 > self.NumNodes:
+                    size_increase = increase_tree_size(self)
+                    children = concatenate((children, -ones((size_increase, 8), dtype=np.int64)))
+                nn = new_node_idx
+                new_node_idx += 1
+                for k in range(3):
+                    self.Coordinates[nn, k] = self.Coordinates[cur, k] + self.Sizes[cur] * octant_offsets[7, k]
+                self.Sizes[nn] = self.Sizes[cur] * 0.5
+                children[cur, 7] = nn
+                cur = nn
+                slot = 0
+            children[cur, slot] = lo + jj
+            slot += 1
+        return children, new_node_idx
 
     def GetWalkIndices(self):  # gets the ordering of the particles in the treewalk
         index = 0

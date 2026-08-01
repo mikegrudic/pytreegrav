@@ -58,6 +58,7 @@ def ConstructTree(
     vel=None,
     compute_moments=True,
     morton_order=True,
+    radix=True,
 ):
     """Builds a tree containing particle data, for subsequent potential/field evaluation
 
@@ -73,6 +74,9 @@ def ConstructTree(
         Whether to store quadrupole moments (default False)
     vel: bool, optional
         Whether to store node velocities in the tree (default False)
+    radix: bool, optional
+        Whether to use the radix-sort tree build (faster, default True). Set False to use the
+        legacy insertion build. Ignored when vel is provided (dynamic tree always uses insertion).
 
     Returns
     -------
@@ -99,6 +103,7 @@ def ConstructTree(
             quadrupole=quadrupole,
             compute_moments=compute_moments,
             morton_order=morton_order,
+            radix=radix,
         )
     else:
         return DynamicOctree(pos, m, softening, vel, quadrupole=quadrupole)
