@@ -1,126 +1,307 @@
-"""Prototype grouped/vectorized Barnes-Hut treewalk (monopole acceleration).
+"""Grouped/vectorized Barnes-Hut treewalk: one traversal per spatially-compact group of targets.
 
-WORK IN PROGRESS - not yet wired into the frontend (Accel/AccelTarget). This is the single-kernel
-prototype validated in benchmarking: ~2.2x faster than the per-particle walk on a 16M-particle
-GIZMO snapshot and ~2.9-3.6x on a Plummer sphere, at equal-or-better accuracy for a given theta.
+Instead of walking the tree once per target particle, we walk it once per *group* of consecutive
+(Morton-sorted, hence spatially compact) targets.  Each group traverses the tree once; at every
+accepted element the per-kernel physics inner-loops over the group's targets.  The speedup comes
+from *amortizing the traversal*: the branchy, pointer-chasing tree descent (a descent step costs
+~3x a force-pair evaluation) runs ~group_size times fewer, which more than pays for the extra
+force-pair work that grouping incurs.  (It is NOT from SIMD/vectorization - the inner loop's
+branches and ForceKernel call keep it scalar; toggling fastmath changes runtime by only ~2%.)
 
-Idea: instead of walking the tree once per target particle, walk it once per *group* of spatially
-compact targets (contiguous chunks of the Morton-sorted target array, which are compact for free).
-Each group traverses the tree once; at every accepted element we inner-loop over the group's
-targets - the dense, vectorizable kernel that provides the speedup. Group acceptance uses the
-group bounding box's nearest distance (r_min) and the group's max softening, which is strictly more
-conservative than the per-particle criterion, so the result opens a superset of nodes and accuracy
-is preserved (equal-or-better) for a given theta.
+Group acceptance uses the group bounding box's nearest distance (r_min) and the group's max
+softening, which is strictly more conservative than the per-particle criterion, so the result opens
+a superset of nodes: accuracy is equal-or-better than the per-particle walk for a given theta (at
+the cost of more force-pairs - the trade grouping makes).  group_size=1 reproduces the per-particle
+walk; the optimum (~8) is where traversal amortization saturates before interaction-list bloat
+dominates.
 
-To productionize: factor a shared grouped-traversal core and port the Potential/quadrupole/target
-variants, then wire group_size (default 8 works well) through ConstructTree/Accel.
+The traversal core is shared across all lenses; only the small ``inline='always'`` per-interaction
+kernel varies (monopole/quadrupole x potential/acceleration).  numba specializes and inlines the
+kernel, so the shared core costs only a few percent over a hand-fused walk.
 """
 
 import numpy as np
+from math import sqrt
 from numba import njit, prange, set_parallel_chunksize
 
-from .kernel import ForceKernel
+from .kernel import ForceKernel, PotentialKernel
 from .treewalk import acceptance_criterion
+from .octree import _morton_keys, _radix_argsort
 
 
-@njit(fastmath=True, parallel=True)
-def grouped_accel(pos, soft, tree, group_size, theta=0.7, G=1.0):
-    """Gravitational acceleration at pos via a grouped (vectorized) Barnes-Hut monopole walk.
+# --------------------------------------------------------------------------------------------------
+# Per-interaction kernels.  Signature: (no, a, b, pos, soft, tree, acc) where [a, b) is the group's
+# range in the Morton-sorted target arrays and acc is the group's (m, W) accumulator.  Each adds the
+# contribution of source element ``no`` (a particle if no < NumParticles, else a node) to every
+# target in the group.  Marked inline='always' so the shared core folds them in.
+# --------------------------------------------------------------------------------------------------
 
-    pos, soft must be in tree (Morton) order - i.e. pos = pos_source[tree.TreewalkIndices], as the
-    frontend already arranges. Returns a (N, 3) array in that same order.
-    """
-    N = pos.shape[0]
-    ngroups = (N + group_size - 1) // group_size
-    result = np.zeros((N, 3))
-    set_parallel_chunksize(64)
-    for gi in prange(ngroups):
-        a = gi * group_size
-        b = min(a + group_size, N)
-        m = b - a
-        # group bounding box + max softening
-        bmin0 = pos[a, 0]
-        bmin1 = pos[a, 1]
-        bmin2 = pos[a, 2]
-        bmax0 = pos[a, 0]
-        bmax1 = pos[a, 1]
-        bmax2 = pos[a, 2]
-        hmax = soft[a]
-        for t in range(a + 1, b):
-            if pos[t, 0] < bmin0:
-                bmin0 = pos[t, 0]
-            elif pos[t, 0] > bmax0:
-                bmax0 = pos[t, 0]
-            if pos[t, 1] < bmin1:
-                bmin1 = pos[t, 1]
-            elif pos[t, 1] > bmax1:
-                bmax1 = pos[t, 1]
-            if pos[t, 2] < bmin2:
-                bmin2 = pos[t, 2]
-            elif pos[t, 2] > bmax2:
-                bmax2 = pos[t, 2]
-            if soft[t] > hmax:
-                hmax = soft[t]
 
-        g_local = np.zeros((m, 3))
-        no = tree.NumParticles  # root
-        while no > -1:
-            cx = tree.Coordinates[no, 0]
-            cy = tree.Coordinates[no, 1]
-            cz = tree.Coordinates[no, 2]
-            # nearest distance from node position to the group's bbox (0 if inside)
-            dxm = 0.0
-            if cx < bmin0:
-                dxm = bmin0 - cx
-            elif cx > bmax0:
-                dxm = cx - bmax0
-            dym = 0.0
-            if cy < bmin1:
-                dym = bmin1 - cy
-            elif cy > bmax1:
-                dym = cy - bmax1
-            dzm = 0.0
-            if cz < bmin2:
-                dzm = bmin2 - cz
-            elif cz > bmax2:
-                dzm = cz - bmax2
-            r_min = np.sqrt(dxm * dxm + dym * dym + dzm * dzm)
-            h = max(tree.Softenings[no], hmax)
-
-            interact = False
-            if no < tree.NumParticles:  # leaf particle -> always a direct interaction
-                interact = True
-                nxt = tree.NextBranch[no]
-            elif acceptance_criterion(r_min, h, tree.Sizes[no], tree.Deltas[no], theta):
-                interact = True
-                nxt = tree.NextBranch[no]
+@njit(inline="always", fastmath=True)
+def _accel_mono(no, a, b, pos, soft, tree, acc):
+    """Add source ``no``'s monopole (point-mass, softened) acceleration to every target in [a, b)."""
+    cx = tree.Coordinates[no, 0]
+    cy = tree.Coordinates[no, 1]
+    cz = tree.Coordinates[no, 2]
+    M = tree.Masses[no]
+    hs = tree.Softenings[no]
+    for t in range(a, b):
+        dx = cx - pos[t, 0]
+        dy = cy - pos[t, 1]
+        dz = cz - pos[t, 2]
+        r2 = dx * dx + dy * dy + dz * dz
+        if r2 > 0:
+            r = sqrt(r2)
+            ht = max(hs, soft[t])
+            if r < ht:
+                fac = M * ForceKernel(r, ht)
             else:
-                no = tree.FirstSubnode[no]
-                continue
+                fac = M / (r * r2)
+            acc[t - a, 0] += fac * dx
+            acc[t - a, 1] += fac * dy
+            acc[t - a, 2] += fac * dz
 
-            if interact:
-                M = tree.Masses[no]
-                hs = tree.Softenings[no]
-                # dense inner loop over the group's targets (the vectorizable kernel)
-                for t in range(a, b):
-                    ddx = cx - pos[t, 0]
-                    ddy = cy - pos[t, 1]
-                    ddz = cz - pos[t, 2]
-                    r2 = ddx * ddx + ddy * ddy + ddz * ddz
-                    if r2 > 0:
-                        r = np.sqrt(r2)
-                        ht = max(hs, soft[t])
-                        if r < ht:
-                            fac = M * ForceKernel(r, ht)
-                        else:
-                            fac = M / (r * r2)
-                        g_local[t - a, 0] += fac * ddx
-                        g_local[t - a, 1] += fac * ddy
-                        g_local[t - a, 2] += fac * ddz
-            no = nxt
 
-        for t in range(a, b):
-            result[t, 0] = G * g_local[t - a, 0]
-            result[t, 1] = G * g_local[t - a, 1]
-            result[t, 2] = G * g_local[t - a, 2]
-    return result
+@njit(inline="always", fastmath=True)
+def _pot_mono(no, a, b, pos, soft, tree, acc):
+    """Add source ``no``'s monopole (point-mass, softened) potential to every target in [a, b)."""
+    cx = tree.Coordinates[no, 0]
+    cy = tree.Coordinates[no, 1]
+    cz = tree.Coordinates[no, 2]
+    M = tree.Masses[no]
+    hs = tree.Softenings[no]
+    for t in range(a, b):
+        dx = cx - pos[t, 0]
+        dy = cy - pos[t, 1]
+        dz = cz - pos[t, 2]
+        r2 = dx * dx + dy * dy + dz * dz
+        if r2 > 0:
+            r = sqrt(r2)
+            ht = max(hs, soft[t])
+            if r < ht:
+                acc[t - a, 0] += M * PotentialKernel(r, ht)
+            else:
+                acc[t - a, 0] += -M / r
+
+
+@njit(inline="always", fastmath=True)
+def _accel_quad(no, a, b, pos, soft, tree, acc):
+    """Add source ``no``'s acceleration to every target in [a, b), with the quadrupole term for nodes.
+
+    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes
+    add the quadrupole correction.
+    """
+    cx = tree.Coordinates[no, 0]
+    cy = tree.Coordinates[no, 1]
+    cz = tree.Coordinates[no, 2]
+    M = tree.Masses[no]
+    hs = tree.Softenings[no]
+    is_node = no >= tree.NumParticles  # only nodes carry quadrupole moments
+    d = np.empty(3, dtype=np.float64)
+    for t in range(a, b):
+        d[0] = cx - pos[t, 0]
+        d[1] = cy - pos[t, 1]
+        d[2] = cz - pos[t, 2]
+        r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+        if r2 > 0:
+            r = sqrt(r2)
+            ht = max(hs, soft[t])
+            if r < ht:
+                fac = M * ForceKernel(r, ht)
+            else:
+                fac = M / (r * r2)
+            acc[t - a, 0] += fac * d[0]  # monopole
+            acc[t - a, 1] += fac * d[1]
+            acc[t - a, 2] += fac * d[2]
+            if is_node:
+                quad = tree.Quadrupoles[no]
+                r5inv = 1.0 / (r2 * r2 * r)
+                quad_fac = 0.0
+                for k in range(3):
+                    for l in range(3):
+                        quad_fac += quad[k, l] * d[k] * d[l]
+                quad_fac *= r5inv / r2
+                for k in range(3):
+                    val = 2.5 * quad_fac * d[k]
+                    for l in range(3):
+                        val -= quad[k, l] * d[l] * r5inv
+                    acc[t - a, k] += val
+
+
+@njit(inline="always", fastmath=True)
+def _pot_quad(no, a, b, pos, soft, tree, acc):
+    """Add source ``no``'s potential to every target in [a, b), with the quadrupole term for nodes.
+
+    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes
+    add the quadrupole correction.
+    """
+    cx = tree.Coordinates[no, 0]
+    cy = tree.Coordinates[no, 1]
+    cz = tree.Coordinates[no, 2]
+    M = tree.Masses[no]
+    hs = tree.Softenings[no]
+    is_node = no >= tree.NumParticles
+    d = np.empty(3, dtype=np.float64)
+    for t in range(a, b):
+        d[0] = cx - pos[t, 0]
+        d[1] = cy - pos[t, 1]
+        d[2] = cz - pos[t, 2]
+        r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+        if r2 > 0:
+            r = sqrt(r2)
+            ht = max(hs, soft[t])
+            if is_node:
+                acc[t - a, 0] += -M / r  # accepted node: r > h, point mass
+                quad = tree.Quadrupoles[no]
+                r5inv = 1.0 / (r * r2 * r2)
+                s = 0.0
+                for k in range(3):
+                    for l in range(3):
+                        s += d[k] * quad[k, l] * d[l]
+                acc[t - a, 0] += -0.5 * s * r5inv
+            elif r < ht:
+                acc[t - a, 0] += M * PotentialKernel(r, ht)
+            else:
+                acc[t - a, 0] += -M / r
+
+
+# --------------------------------------------------------------------------------------------------
+# Shared traversal core.  Factory specializes it per kernel so the kernel inlines.
+# --------------------------------------------------------------------------------------------------
+
+
+def _make_core(kernel, parallel):
+    """Build a jitted grouped-walk core specialized to ``kernel`` (inlined) and ``parallel``.
+
+    Returns a njit function core(pos, soft, tree, group_size, theta, G, W) -> (N, W) field array,
+    where W is the output width (3 for acceleration, 1 for potential) and pos/soft are in tree
+    (Morton) order.  Separate instances are built per kernel so numba inlines each kernel.
+    """
+
+    def core(pos, soft, tree, group_size, theta, G, W):
+        """Grouped Barnes-Hut walk: traverse the tree once per group of ``group_size`` targets.
+
+        For each group, computes its bounding box and max softening, descends the tree accepting or
+        opening nodes by the group's nearest-corner distance (r_min) and max softening, and lets
+        ``kernel`` accumulate each accepted element's contribution over the group's targets.  Returns
+        G times the accumulated field as an (N, W) array in the input (Morton) order.
+        """
+        N = pos.shape[0]
+        out = np.zeros((N, W))
+        ngroups = (N + group_size - 1) // group_size
+        set_parallel_chunksize(64)
+        for gi in prange(ngroups):
+            a = gi * group_size
+            b = min(a + group_size, N)
+            m = b - a
+            # group bounding box + max softening
+            bmin0 = pos[a, 0]
+            bmin1 = pos[a, 1]
+            bmin2 = pos[a, 2]
+            bmax0 = pos[a, 0]
+            bmax1 = pos[a, 1]
+            bmax2 = pos[a, 2]
+            hmax = soft[a]
+            for t in range(a + 1, b):
+                if pos[t, 0] < bmin0:
+                    bmin0 = pos[t, 0]
+                elif pos[t, 0] > bmax0:
+                    bmax0 = pos[t, 0]
+                if pos[t, 1] < bmin1:
+                    bmin1 = pos[t, 1]
+                elif pos[t, 1] > bmax1:
+                    bmax1 = pos[t, 1]
+                if pos[t, 2] < bmin2:
+                    bmin2 = pos[t, 2]
+                elif pos[t, 2] > bmax2:
+                    bmax2 = pos[t, 2]
+                if soft[t] > hmax:
+                    hmax = soft[t]
+
+            acc = np.zeros((m, W))
+            no = tree.NumParticles  # root
+            while no > -1:
+                cx = tree.Coordinates[no, 0]
+                cy = tree.Coordinates[no, 1]
+                cz = tree.Coordinates[no, 2]
+                # nearest distance from node position to the group's bbox (0 if inside)
+                dxm = 0.0
+                if cx < bmin0:
+                    dxm = bmin0 - cx
+                elif cx > bmax0:
+                    dxm = cx - bmax0
+                dym = 0.0
+                if cy < bmin1:
+                    dym = bmin1 - cy
+                elif cy > bmax1:
+                    dym = cy - bmax1
+                dzm = 0.0
+                if cz < bmin2:
+                    dzm = bmin2 - cz
+                elif cz > bmax2:
+                    dzm = cz - bmax2
+                r_min = sqrt(dxm * dxm + dym * dym + dzm * dzm)
+                h = max(tree.Softenings[no], hmax)
+                if no < tree.NumParticles or acceptance_criterion(r_min, h, tree.Sizes[no], tree.Deltas[no], theta):
+                    kernel(no, a, b, pos, soft, tree, acc)
+                    no = tree.NextBranch[no]
+                else:
+                    no = tree.FirstSubnode[no]
+            for t in range(a, b):
+                for k in range(W):
+                    out[t, k] = G * acc[t - a, k]
+        return out
+
+    return njit(core, fastmath=True, parallel=parallel)
+
+
+_accel_core = (_make_core(_accel_mono, False), _make_core(_accel_mono, True))
+_accel_quad_core = (_make_core(_accel_quad, False), _make_core(_accel_quad, True))
+_pot_core = (_make_core(_pot_mono, False), _make_core(_pot_mono, True))
+_pot_quad_core = (_make_core(_pot_quad, False), _make_core(_pot_quad, True))
+
+
+def _morton_order(points):
+    """Permutation that sorts arbitrary points into a spatially-compact (Morton) order."""
+    lo = points.min(axis=0)
+    hi = points.max(axis=0)
+    center = 0.5 * (hi + lo)
+    size = float((hi - lo).max())
+    return _radix_argsort(_morton_keys(np.ascontiguousarray(points), center, size))
+
+
+# --------------------------------------------------------------------------------------------------
+# Public wrappers.  pos/soft must already be in a spatially-compact order for grouping to help; the
+# frontend feeds Morton order (self-gravity is pre-sorted, external targets are sorted via
+# _morton_order).  group_size=1 reproduces the per-particle walk.
+# --------------------------------------------------------------------------------------------------
+
+
+def AccelTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+    """Gravitational acceleration at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
+
+    Arguments:
+    pos -- shape (N, 3) target positions, in tree (Morton) order for grouping to be effective
+    soft -- shape (N,) minimum softening length of each target
+    tree -- Octree containing the source mass distribution
+    Keyword arguments:
+    group_size -- targets per group (default 8); 1 reproduces the per-particle walk
+    G -- gravitational constant (default 1.0)
+    theta -- opening-angle accuracy parameter (default 0.7)
+    quadrupole -- include quadrupole moments (default False); requires a tree built with quadrupole=True
+    parallel -- parallelize over groups (default True)
+    Returns:
+    shape (N, 3) array of accelerations in the same order as ``pos``.
+    """
+    core = (_accel_quad_core if quadrupole else _accel_core)[1 if parallel else 0]
+    return core(pos, soft, tree, group_size, theta, G, 3)
+
+
+def PotentialTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+    """Gravitational potential at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
+
+    Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,) array of
+    potentials in the same order as ``pos``.
+    """
+    core = (_pot_quad_core if quadrupole else _pot_core)[1 if parallel else 0]
+    return core(pos, soft, tree, group_size, theta, G, 1)[:, 0]

@@ -5,6 +5,7 @@ from .kernel import *
 from .octree import *
 from .dynamic_tree import *
 from .treewalk import *
+from .grouped_treewalk import AccelTarget_grouped, PotentialTarget_grouped, _morton_order
 from .bruteforce import *
 from .misc import *
 
@@ -72,16 +73,26 @@ def ConstructTree(
         shape (N,) array of particle softening lengths - these give the radius of compact support of the M4 cubic spline mass distribution of each particle
     quadrupole: bool, optional
         Whether to store quadrupole moments (default False)
-    vel: bool, optional
-        Whether to store node velocities in the tree (default False)
+    vel: array_like or None, optional
+        shape (N,3) array of particle velocities. If provided, a DynamicOctree that also stores
+        node-averaged velocities is built (used by the velocity correlation/structure functions);
+        if None, a static Octree is built (default None)
+    compute_moments: bool, optional
+        Whether to compute node multipole moments (centers of mass, masses, softenings, and
+        quadrupoles if enabled). Set False to build only the spatial structure, e.g. for purely
+        geometric queries (default True; forced False when m is None)
+    morton_order: bool, optional
+        Whether to store particles in Morton (depth-first traversal) order for cache-efficient
+        treewalks (default True)
     radix: bool, optional
         Whether to use the radix-sort tree build (faster, default True). Set False to use the
-        legacy insertion build. Ignored when vel is provided (dynamic tree always uses insertion).
+        legacy insertion build. Ignored when vel is provided (dynamic tree always uses insertion),
+        or when morton_order is False.
 
     Returns
     -------
-    tree: octree
-        Octree instance built from particle data
+    tree: Octree or DynamicOctree
+        tree instance built from the particle data
     """
 
     warn_if_nonunique_positions(pos, softening)
@@ -120,6 +131,7 @@ def Potential(
     parallel=False,
     method="adaptive",
     quadrupole=False,
+    group_size=8,
 ):
     """Gravitational potential calculation
 
@@ -147,6 +159,12 @@ def Potential(
         Which summation method to use: 'adaptive', 'tree', or 'bruteforce' (default adaptive tries to pick the faster choice)
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
+    group_size: int, optional
+        Number of targets per group in the grouped treewalk: the tree is traversed once per
+        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
+        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
+        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
+        grow and open more nodes. Only affects the tree method.
 
     Returns
     -------
@@ -188,10 +206,17 @@ def Potential(
         pos_sorted = np.take(pos, idx, axis=0)
         h_sorted = np.take(softening, idx)
 
-        if parallel:
-            phi = PotentialTarget_tree_parallel(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
-        else:
-            phi = PotentialTarget_tree(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
+        # pos_sorted is already in Morton order, so consecutive targets are spatially compact groups
+        phi = PotentialTarget_grouped(
+            pos_sorted,
+            h_sorted,
+            tree,
+            group_size=group_size,
+            G=G,
+            theta=theta,
+            quadrupole=quadrupole,
+            parallel=parallel,
+        )
 
         # now reorder phi back to the order of the input positions
         phi = np.take(phi, idx.argsort())
@@ -215,6 +240,7 @@ def PotentialTarget(
     parallel=False,
     method="adaptive",
     quadrupole=False,
+    group_size=8,
 ):
     """Gravitational potential calculation for general N+M body case
 
@@ -246,6 +272,12 @@ def PotentialTarget(
         Which summation method to use: 'adaptive', 'tree', or 'bruteforce' (default adaptive tries to pick the faster choice)
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
+    group_size: int, optional
+        Number of targets per group in the grouped treewalk: the tree is traversed once per
+        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
+        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
+        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
+        grow and open more nodes. Only affects the tree method.
 
     Returns
     -------
@@ -302,24 +334,20 @@ def PotentialTarget(
                 np.float64(softening_source),
                 quadrupole=quadrupole,
             )  # build the tree if needed
-        if parallel:
-            phi = PotentialTarget_tree_parallel(
-                pos_target,
-                softening_target,
-                tree,
-                theta=theta,
-                G=G,
-                quadrupole=quadrupole,
-            )
-        else:
-            phi = PotentialTarget_tree(
-                pos_target,
-                softening_target,
-                tree,
-                theta=theta,
-                G=G,
-                quadrupole=quadrupole,
-            )
+        # external targets are not spatially ordered; Morton-sort them so grouping is effective
+        tsort = _morton_order(np.float64(pos_target))
+        phi_sorted = PotentialTarget_grouped(
+            np.float64(pos_target)[tsort],
+            np.float64(softening_target)[tsort],
+            tree,
+            group_size=group_size,
+            G=G,
+            theta=theta,
+            quadrupole=quadrupole,
+            parallel=parallel,
+        )
+        phi = np.empty_like(phi_sorted)
+        phi[tsort] = phi_sorted  # undo the Morton permutation
 
     if return_tree:
         return phi, tree
@@ -338,6 +366,7 @@ def Accel(
     parallel=False,
     method="adaptive",
     quadrupole=False,
+    group_size=8,
 ):
     """Gravitational acceleration calculation
 
@@ -365,6 +394,12 @@ def Accel(
         Which summation method to use: 'adaptive', 'tree', or 'bruteforce' (default adaptive tries to pick the faster choice)
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
+    group_size: int, optional
+        Number of targets per group in the grouped treewalk: the tree is traversed once per
+        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
+        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
+        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
+        grow and open more nodes. Only affects the tree method.
 
     Returns
     -------
@@ -406,10 +441,17 @@ def Accel(
         pos_sorted = np.take(pos, idx, axis=0)
         h_sorted = np.take(softening, idx)
 
-        if parallel:
-            g = AccelTarget_tree_parallel(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
-        else:
-            g = AccelTarget_tree(pos_sorted, h_sorted, tree, theta=theta, G=G, quadrupole=quadrupole)
+        # pos_sorted is already in Morton order, so consecutive targets are spatially compact groups
+        g = AccelTarget_grouped(
+            pos_sorted,
+            h_sorted,
+            tree,
+            group_size=group_size,
+            G=G,
+            theta=theta,
+            quadrupole=quadrupole,
+            parallel=parallel,
+        )
 
         # now g is in the tree-order: reorder it back to the original order
         g = np.take(g, idx.argsort(), axis=0)
@@ -433,6 +475,7 @@ def AccelTarget(
     parallel=False,
     method="adaptive",
     quadrupole=False,
+    group_size=8,
 ):
     """Gravitational acceleration calculation for general N+M body case
 
@@ -464,6 +507,12 @@ def AccelTarget(
         Which summation method to use: 'adaptive', 'tree', or 'bruteforce' (default adaptive tries to pick the faster choice)
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
+    group_size: int, optional
+        Number of targets per group in the grouped treewalk: the tree is traversed once per
+        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
+        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
+        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
+        grow and open more nodes. Only affects the tree method.
 
     Returns
     -------
@@ -520,24 +569,20 @@ def AccelTarget(
                 np.float64(softening_source),
                 quadrupole=quadrupole,
             )  # build the tree if needed
-        if parallel:
-            g = AccelTarget_tree_parallel(
-                pos_target,
-                softening_target,
-                tree,
-                theta=theta,
-                G=G,
-                quadrupole=quadrupole,
-            )
-        else:
-            g = AccelTarget_tree(
-                pos_target,
-                softening_target,
-                tree,
-                theta=theta,
-                G=G,
-                quadrupole=quadrupole,
-            )
+        # external targets are not spatially ordered; Morton-sort them so grouping is effective
+        tsort = _morton_order(np.float64(pos_target))
+        g_sorted = AccelTarget_grouped(
+            np.float64(pos_target)[tsort],
+            np.float64(softening_target)[tsort],
+            tree,
+            group_size=group_size,
+            G=G,
+            theta=theta,
+            quadrupole=quadrupole,
+            parallel=parallel,
+        )
+        g = np.empty_like(g_sorted)
+        g[tsort] = g_sorted  # undo the Morton permutation
 
     if return_tree:
         return g, tree
@@ -841,17 +886,17 @@ def ColumnDensity(
     radii: array_like
         shape (N,) array containing particle radii of the uniform spheres that
         we use to model the particles' mass distribution
-    rays: optional
-        Which ray directions to raytrace the columns.
+    rays: None, int, or array_like, optional
+        Which ray directions to raytrace the columns (default None).
         None: use the angular-binned column density method with 6 bins on the sky
         OPTION 2: Integer number: use this many rays, with 6 using the standard
         6-ray grid and other numbers sampling random directions
         OPTION 3: Give a (N_rays,3) array of vectors specifying the
         directions, which will be automatically normalized.
     healpix: int, optional
-        Use healpix ray grid with specified resolution level NSIDE
+        If nonzero, use a healpix ray grid with this resolution level NSIDE (default False)
     randomize_rays: bool, optional
-        Randomize the orientation of the ray-grid *for each particle*
+        Randomize the orientation of the ray-grid *for each particle* (default False)
     parallel: bool, optional
         If True, will parallelize the column density over all available cores.
         (default False)
@@ -859,7 +904,7 @@ def ColumnDensity(
         optional pre-generated Octree: this can contain any set of particles,
         not necessarily the target particles at pos (default None)
     theta: float, optional
-        Opening angle for beam-traced angular bin estimator
+        Opening angle for the beam-traced angular bin estimator (default 0.5)
     return_tree: bool, optional
         return the tree used for future use (default False)
 
