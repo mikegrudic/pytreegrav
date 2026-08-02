@@ -243,7 +243,9 @@ def _make_core(kernel, parallel):
                         dzm = cz - bmax2
                     r_min = sqrt(dxm * dxm + dym * dym + dzm * dzm)
                     h = max(tree.Softenings[no], hmax)
-                    if no < tree.NumParticles or acceptance_criterion(r_min, h, tree.Sizes[no], tree.Deltas[no], theta):
+                    if no < tree.NumParticles or acceptance_criterion(
+                        r_min, h, tree.Sizes[no], tree.Deltas[no], theta
+                    ):
                         kernel(no, a, b, pos, soft, tree, acc)
                         no = tree.NextBranch[no]
                     else:
