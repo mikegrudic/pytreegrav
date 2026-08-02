@@ -4,3 +4,8 @@ requires = [
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 120
+# Match the previous black scope: format Python only, leave Markdown code blocks alone.
+extend-exclude = ["*.md"]

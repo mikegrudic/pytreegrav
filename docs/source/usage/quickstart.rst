@@ -67,7 +67,7 @@ By default, pytreegrav will try to make the optimal choice between brute-force a
 
 
 
-As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding 10^4. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel i9 9900k workstation:
+As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding a few thousand. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel Xeon Gold 6244 workstation (brute force is stopped at 10^5, where it already costs ~200x more per particle):
 
 .. image:: ./CPU_Time_serial.png
    :target: ./CPU_Time_serial.png
@@ -85,12 +85,12 @@ But there's no free lunch here: the tree methods are approximate. Let's quantify
 
 .. code-block::
 
-   RMS force error:  0.006739311224338851
-   RMS potential error:  0.0003888328578588027
+   RMS force error:  0.0039012
+   RMS potential error:  0.00025316
 
 
 
-The above errors are typical for default settings: ~1% force error and ~0.1\% potential error. The error in the tree approximation is controlled by the Barnes-Hut opening angle ``theta``\ , set to 0.7 by default. Smaller ``theta`` gives higher accuracy, but also runs slower:
+The above errors are typical for default settings: ~0.2% RMS force error and ~0.1% RMS potential error (relative to the RMS field strength). The error in the tree approximation is controlled by the Barnes-Hut opening angle ``theta``\ , set to 0.7 by default. Smaller ``theta`` gives higher accuracy, but also runs slower:
 
 .. code-block:: python
 
@@ -109,6 +109,57 @@ The above errors are typical for default settings: ~1% force error and ~0.1\% po
    theta=0.8 Runtime: 0.724668s RMS force error: 0.0105937
 
 
+
+
+Accuracy versus cost
+^^^^^^^^^^^^^^^^^^^^
+
+The tree walk's cost scales roughly as ``theta^-3``, so it is worth knowing what that buys. The sweep
+above is serial and quotes *absolute* error; the figure below is the same experiment run **in
+parallel** with errors normalised, so the two sets of timings are not directly comparable. Running
+``examples/error_benchmark.py`` on a 10^5-particle Plummer sphere gives:
+
+.. image:: ./error_vs_theta.png
+   :target: ./error_vs_theta.png
+   :alt: Tree accuracy vs opening angle
+
+Errors are relative to the RMS field strength of the system (and to ``std(phi)`` for the potential,
+whose zero point is arbitrary). Some representative points for the acceleration:
+
+.. list-table::
+   :header-rows: 1
+
+   * - theta
+     - RMS error
+     - max error
+     - solve time
+   * - 0.1
+     - 1.4e-05
+     - 1.3e-04
+     - 1.07 s
+   * - 0.4
+     - 4.8e-04
+     - 6.4e-03
+     - 0.13 s
+   * - 0.7 (default)
+     - 1.8e-03
+     - 1.9e-02
+     - 0.07 s
+   * - 1.0
+     - 4.8e-03
+     - 6.2e-02
+     - 0.06 s
+
+Two things worth noting. First, **the maximum error is consistently ~10x the RMS error** across the
+whole range: the treecode error distribution has a long tail, so if your problem is sensitive to the
+worst-case error on any single particle, budget an order of magnitude above the RMS figure. Second,
+the returns are strongly diminishing in the direction of small ``theta`` -- going from ``theta=1.0``
+to ``theta=0.1`` costs ~17x the runtime to buy ~340x the accuracy, but most of that accuracy gain is
+already available by ``theta=0.4`` at a quarter of the cost. The right-hand panel plots error directly
+against solve time, which is usually the more decision-relevant view.
+
+The potential is roughly 4-5x more accurate than the acceleration at fixed ``theta``, because it
+converges faster in the multipole expansion.
 
 Both brute-force and tree-based calculations can be parallelized across all available logical cores via OpenMP, by specifying ``parallel=True``. This can speed things up considerably, with parallel scaling that will vary with your core and particle number:
 

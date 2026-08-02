@@ -15,14 +15,14 @@ def PotentialTarget_bruteforce(x_target, softening_target, x_source, m_source, s
     softening_source -- shape (M,) array of softening lengths
 
     Optional arguments:
-    G -- gravitational constant (default 0.7)
+    G -- gravitational constant (default 1.0)
 
     Returns:
     shape (N,) array of potential values
     """
     potential = np.zeros(x_target.shape[0])
-    dx = np.empty(3)
     for i in prange(x_target.shape[0]):
+        dx = np.empty(3)  # allocate inside prange so it is thread-private by construction
         for j in range(x_source.shape[0]):
             for k in range(3):
                 dx[k] = x_target[i, k] - x_source[j, k]
@@ -37,11 +37,15 @@ def PotentialTarget_bruteforce(x_target, softening_target, x_source, m_source, s
     return G * potential
 
 
+# NOTE: no cache=True on these four.  Both variants are njit'd from the SAME Python
+# function, so they share one on-disk cache entry (keyed by qualname+lineno) and the
+# parallel dispatcher silently loads the serial code -- measured 8.4x -> 1.05x, with no
+# warning.  The decorator-form kernels above/below are separate functions and cache fine.
 PotentialTarget_bruteforce_parallel = njit(PotentialTarget_bruteforce, fastmath=True, parallel=True)
 PotentialTarget_bruteforce = njit(PotentialTarget_bruteforce, fastmath=True)
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def Potential_bruteforce(x, m, softening, G=1.0):
     """Returns the exact mutually-interacting gravitational potential for a set of particles with positions x and masses m, evaluated by brute force.
 
@@ -74,7 +78,7 @@ def Potential_bruteforce(x, m, softening, G=1.0):
     return G * potential
 
 
-@njit(fastmath=True, parallel=True)
+@njit(fastmath=True, parallel=True, cache=True)
 def Potential_bruteforce_parallel(x, m, softening, G=1.0):
     """Returns the exact mutually-interacting gravitational potential for a set of particles with positions x and masses m, evaluated by brute force.
 
@@ -107,7 +111,7 @@ def Potential_bruteforce_parallel(x, m, softening, G=1.0):
     return G * potential
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def Accel_bruteforce(x, m, softening, G=1.0):
     """Returns the exact mutually-interacting gravitational accelerations of a set of particles.
 
@@ -152,7 +156,7 @@ def Accel_bruteforce(x, m, softening, G=1.0):
     return G * accel
 
 
-@njit(fastmath=True, parallel=True)
+@njit(fastmath=True, parallel=True, cache=True)
 def Accel_bruteforce_parallel(x, m, softening, G=1.0):
     """Returns the exact mutually-interacting gravitational accelerations of a set of particles.
 
@@ -239,5 +243,9 @@ def AccelTarget_bruteforce(x_target, softening_target, x_source, m_source, softe
     return G * accel
 
 
+# NOTE: no cache=True on these four.  Both variants are njit'd from the SAME Python
+# function, so they share one on-disk cache entry (keyed by qualname+lineno) and the
+# parallel dispatcher silently loads the serial code -- measured 8.4x -> 1.05x, with no
+# warning.  The decorator-form kernels above/below are separate functions and cache fine.
 AccelTarget_bruteforce_parallel = njit(AccelTarget_bruteforce, fastmath=True, parallel=True)
 AccelTarget_bruteforce = njit(AccelTarget_bruteforce, fastmath=True)

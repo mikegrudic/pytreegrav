@@ -1,11 +1,27 @@
-name: black-action
-on: [push, pull_request]
+name: ruff
+on:
+  push:
+    branches: ['**']  # branch pushes only (not tags, which check out detached and can't be pushed back)
+permissions:
+  contents: write  # needed to push the auto-format commit back
 jobs:
-  linter_name:
-    name: runner / black formatter
+  ruff-format:
+    name: runner / ruff auto-format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rickstaa/action-black@v1
+      - uses: astral-sh/ruff-action@v3
         with:
-          black_args: "-l 119 ."
+          version: "0.16.1"  # pin for reproducible formatting; bump deliberately
+          args: "format"     # rewrite files in place (no --check)
+      - name: Commit and push formatting changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Already formatted - nothing to commit."
+          else
+            git commit -m "style: auto-format with ruff"
+            git push
+          fi

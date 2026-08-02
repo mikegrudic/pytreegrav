@@ -28,6 +28,14 @@ pytreegrav.frontend module
    :undoc-members:
    :show-inheritance:
 
+pytreegrav.grouped\_treewalk module
+-----------------------------------
+
+.. automodule:: pytreegrav.grouped_treewalk
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pytreegrav.kernel module
 ------------------------
 
