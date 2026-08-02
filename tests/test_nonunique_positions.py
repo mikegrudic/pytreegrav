@@ -161,6 +161,38 @@ def test_dynamic_tree_matches_static_without_duplicates():
     assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(3000))
 
 
+@pytest.mark.parametrize("kwargs", ["{'radix': False}", "{'vel': np.zeros((5, 3))}", "{}"])
+def test_duplicates_at_the_origin_terminate(kwargs):
+    """Duplicated particles sitting at exactly [0, 0, 0] must not hang the build.
+
+    Both insertion builds separate coincident particles by nudging one of them, and the nudge
+    used to be multiplicative -- 0.0 * anything is still 0.0, so the two re-tested equal on
+    every retry and the loop never exited. The radix build was unaffected (it buckets them),
+    which is why this hid: the default path was fine.
+
+    A hang cannot be caught in-process, so this runs in a subprocess under a timeout; without
+    the fix the two insertion cases spin until killed.
+    """
+    src = textwrap.dedent(f"""
+        import warnings, numpy as np
+        warnings.simplefilter("ignore")
+        from pytreegrav import ConstructTree
+        x = np.array([[0.,0.,0.],[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]])
+        m, h = np.repeat(0.2, 5), np.repeat(0.1, 5)
+        tree = ConstructTree(x, m, h, **{kwargs})
+        assert tree.HasCoincidentPoints
+        assert np.isclose(tree.Masses[tree.NumParticles], 1.0)
+        assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(5))
+        print("OK")
+    """)
+    try:
+        r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"build with {kwargs} hung on duplicates at the origin")
+    assert r.returncode == 0, f"rc={r.returncode}: {r.stderr[-2000:]}"
+    assert "OK" in r.stdout
+
+
 def test_lattice_positions_do_not_warn():
     """Every coordinate value repeats on a grid, but no two *positions* coincide. The old check
     tested per-coordinate uniqueness and so told grid users their answer was garbage."""

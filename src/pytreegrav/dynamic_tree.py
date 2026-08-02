@@ -180,7 +180,25 @@ class DynamicOctree(object):
                                 same_coord = False
                         if same_coord:
                             self.HasCoincidentPoints = True
-                            self.Coordinates[i] *= np.exp(3e-16 * (np.random.rand(3) - 0.5))  # random perturbation
+                            # Nudge the duplicate off its twin. This must be ADDITIVE: the old
+                            # `Coordinates[i] *= exp(...)` cannot move a coordinate that is
+                            # exactly 0.0, so two particles at the origin re-tested equal every
+                            # time and spun here forever.
+                            #
+                            # A zero component is stepped relative to the root cube rather than
+                            # to itself. Stepping it by its own ULP (5e-324) would technically
+                            # separate them, but the tree would then need ~1000 levels to
+                            # resolve the gap instead of the ~52 a relative nudge costs.
+                            box = self.Sizes[self.NumParticles]
+                            if box == 0.0:
+                                box = 1.0  # every point identical; the answer is garbage anyway
+                            pert = np.random.rand(3)
+                            for k in range(3):
+                                ck = self.Coordinates[i, k]
+                                step = abs(ck)
+                                if step == 0.0:
+                                    step = box
+                                self.Coordinates[i, k] = ck + step * 3e-16 * (pert[k] - 0.5)
                             points[i] = self.Coordinates[i]
                             no = self.NumParticles  # restart the tree traversal
                             continue
