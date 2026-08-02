@@ -66,34 +66,48 @@ Main simulation loop
 
 .. code:: ipython3
 
-    pos, masses, vel, softening = GenerateICs(10000) # initialize initial condition with 10k particles
-    
-    accel = Accel(pos,masses,softening,parallel=True) # initialize acceleration
-    
-    t = 0 # initial time
-    Tmax = 50 # final/max time
-    
-    energies = [] #energies
-    r50s = [] #half-mass radii
-    ts = [] # times
-    
-    
-    while t <= Tmax: # actual simulation loop - this may take a couple minutes to run    
-        r50s.append(np.median(np.sum((pos - np.median(pos,axis=0))**2,axis=1)**0.5))
-        energies.append(TotalEnergy(pos,masses,vel,softening))
+    pos, masses, vel, softening = GenerateICs(10000)  # initialize initial condition with 10k particles
+
+    accel = Accel(pos, masses, softening, parallel=True)  # initialize acceleration
+
+    t = 0  # initial time
+    Tmax = 50  # final/max time
+    dt = 0.03  # adjust this to control integration error
+
+    energies = []  # energies
+    r50s = []  # half-mass radii
+    ts = []  # times
+
+    # snapshots for the movie below - store positions every Nth step, aimed at ~120 frames
+    n_steps = int(Tmax / dt)
+    # note: %pylab shadows the builtin max() with numpy's, so spell this out explicitly
+    snapshot_interval = n_steps // 120 if n_steps > 120 else 1
+    snapshots = []  # particle positions at each recorded step
+    snap_times = []  # the times those snapshots were taken at
+    step = 0
+
+
+    while t <= Tmax:  # actual simulation loop - this may take a couple minutes to run
+        r50s.append(np.median(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1) ** 0.5))
+        energies.append(TotalEnergy(pos, masses, vel, softening))
         ts.append(t)
-        
-        dt = 0.03 # adjust this to control integration error
-    
+
+        if step % snapshot_interval == 0:  # save a frame for the movie
+            snapshots.append(pos.copy())  # copy - pos is modified in place by the stepper
+            snap_times.append(t)
+
         leapfrog_kdk_timestep(dt, pos, masses, softening, vel, accel)
         t += dt
-        
-    print("Simulation complete! Relative energy error: %g"%(np.abs((energies[0]-energies[-1])/energies[0])))
+        step += 1
+
+    print("Simulation complete! Relative energy error: %g" % (np.abs((energies[0] - energies[-1]) / energies[0])))
+    print("Recorded %d snapshots for the movie" % len(snapshots))
 
 
 .. parsed-literal::
 
-    Simulation complete! Relative energy error: 0.00161328
+    Simulation complete! Relative energy error: 1.51338e-06
+    Recorded 129 snapshots for the movie
 
 
 Analysis
@@ -124,3 +138,46 @@ function of time
 
 .. image:: Nbody_simulation_9_1.png
 
+
+Movie
+-----
+
+The simulation loop above kept a copy of the particle positions every ``snapshot_interval`` steps, so we can watch the blob collapse and then pulsate.
+
+``to_jshtml`` embeds the frames directly in the notebook as a self-contained JavaScript player, so it needs no external tools -- at the cost of making the ``.ipynb`` bigger. If you would rather have a video file, uncomment the ``anim.save`` line (that route needs ffmpeg).
+
+.. code:: ipython3
+
+    %matplotlib inline
+    from matplotlib.animation import FuncAnimation
+    from IPython.display import HTML
+
+    # a handful of particles get flung far out; clip to the 99.5th percentile so the core stays visible
+    lim = np.percentile(np.abs(np.concatenate(snapshots)), 99.5)
+
+    fig, ax = plt.subplots(figsize=(4, 4), dpi=100)
+    ax.set_facecolor("k")
+    ax.set(xlim=(-lim, lim), ylim=(-lim, lim), xticks=[], yticks=[])
+    ax.set_title("N-body collapse (x-y projection)", fontsize=9)
+
+    points = ax.scatter(snapshots[0][:, 0], snapshots[0][:, 1], s=1, c="w", alpha=0.4, linewidths=0)
+    clock = ax.text(0.03, 0.96, "", transform=ax.transAxes, color="w", fontsize=9, va="top")
+
+
+    def update(frame):
+        points.set_offsets(snapshots[frame][:, :2])
+        clock.set_text("t = %.1f" % snap_times[frame])
+        return points, clock
+
+
+    anim = FuncAnimation(fig, update, frames=len(snapshots), interval=50, blit=True)
+    plt.close(fig)  # suppress the static first frame rendering next to the player
+    # anim.save("nbody.mp4", fps=20, dpi=150)  # uncomment for an MP4 instead (needs ffmpeg)
+    HTML(anim.to_jshtml(fps=20))
+
+
+(The notebook renders this as an interactive player; shown here as a pre-rendered
+animation.)
+
+.. image:: Nbody_simulation_movie.gif
+   :alt: N-body collapse animation
