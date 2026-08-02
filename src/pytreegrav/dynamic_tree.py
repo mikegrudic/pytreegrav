@@ -12,7 +12,7 @@ from numba import (
 )
 from numba.experimental import jitclass
 import numpy as np
-from numpy import empty, empty_like, zeros, zeros_like, sqrt, ones
+from numpy import empty, empty_like, zeros, zeros_like, sqrt, ones, concatenate
 
 spec = [
     ("Sizes", float64[:]),  # side length of tree nodes
@@ -29,6 +29,9 @@ spec = [
         "HasQuads",
         boolean,
     ),  # Allow us to quickly check if Quadrupole moments exist to keep monopole calculations fast
+    # True if the build found positions coincident to floating-point precision; the insertion
+    # build has to detect these anyway in order to perturb them apart.
+    ("HasCoincidentPoints", boolean),
     ("NumParticles", int64),  # number of particles in the tree
     ("NumNodes", int64),  # number of particles + nodes (i.e. mass elements) in the tree
     (
@@ -56,6 +59,38 @@ octant_offsets = 0.25 * np.array(
 )
 
 
+@njit
+def increase_dynamic_tree_size(tree, fac=1.2):
+    """Reallocate a DynamicOctree's node arrays with storage increased by factor fac.
+
+    DynamicOctree used to allocate exactly 2*NumParticles slots and never check the bound, so
+    any input needing more wrote off the end of every node array and took the interpreter down
+    with a SIGSEGV. Coincident particles reach that state easily: they are perturbed apart by
+    only ~3e-16, which then takes a chain of ~50 subdivisions to separate, and each duplicated
+    pair costs that many extra nodes.
+
+    Mirrors octree.increase_tree_size, plus Velocities and VelocityDisp. The caller must also
+    grow its local `children` table by the returned amount.
+    """
+    old_size = tree.NumNodes
+    size_increase = max(int(old_size * fac + 1) - old_size, 1)
+
+    tree.Sizes = concatenate((tree.Sizes, zeros(size_increase)))
+    tree.Deltas = concatenate((tree.Deltas, zeros(size_increase)))
+    tree.Masses = concatenate((tree.Masses, zeros(size_increase)))
+    tree.Softenings = concatenate((tree.Softenings, zeros(size_increase)))
+    tree.VelocityDisp = concatenate((tree.VelocityDisp, zeros(size_increase)))
+    tree.NextBranch = concatenate((tree.NextBranch, -ones(size_increase, dtype=np.int64)))
+    tree.FirstSubnode = concatenate((tree.FirstSubnode, -ones(size_increase, dtype=np.int64)))
+    tree.Coordinates = concatenate((tree.Coordinates, zeros((size_increase, 3))))
+    tree.Velocities = concatenate((tree.Velocities, zeros((size_increase, 3))))
+    if tree.HasQuads:
+        tree.Quadrupoles = concatenate((tree.Quadrupoles, zeros((size_increase, 3, 3))))
+    tree.NumNodes += size_increase
+
+    return size_increase
+
+
 @jitclass(spec)
 class DynamicOctree(object):
     """Octree implementation that stores node velocities for correlation functions and dynamic updates."""
@@ -63,6 +98,7 @@ class DynamicOctree(object):
     def __init__(self, points, masses, softening, vels, morton_order=True, quadrupole=False):
         self.TreewalkIndices = -ones(points.shape[0], dtype=np.int64)
         self.HasQuads = quadrupole
+        self.HasCoincidentPoints = False
         children = self.BuildTree(
             points, masses, softening, vels
         )  # first provisional treebuild to get the ordering right
@@ -143,12 +179,18 @@ class DynamicOctree(object):
                             if self.Coordinates[i, k] != self.Coordinates[child_candidate, k]:
                                 same_coord = False
                         if same_coord:
+                            self.HasCoincidentPoints = True
                             self.Coordinates[i] *= np.exp(3e-16 * (np.random.rand(3) - 0.5))  # random perturbation
                             points[i] = self.Coordinates[i]
                             no = self.NumParticles  # restart the tree traversal
                             continue
                         # end exception
 
+                        # grow before touching new_node_idx; without this the write below
+                        # runs off the end of every node array once the tree needs > 2N nodes
+                        while new_node_idx + 1 > self.NumNodes:
+                            size_increase = increase_dynamic_tree_size(self)
+                            children = concatenate((children, -ones((size_increase, 8), dtype=np.int64)))
                         children[no, octant] = new_node_idx
                         self.Coordinates[new_node_idx] = (
                             self.Coordinates[no] + self.Sizes[no] * octant_offsets[octant]

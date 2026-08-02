@@ -21,6 +21,10 @@ spec = [
     ("NextBranch", int64[:]),
     ("FirstSubnode", int64[:]),
     ("TreewalkIndices", int64[:]),
+    # True if the build found positions coincident to floating-point precision. The build has to
+    # detect these anyway to avoid subdividing forever, so this is free -- and exact, unlike
+    # scanning the input up front.
+    ("HasCoincidentPoints", boolean),
 ]
 
 
@@ -383,6 +387,7 @@ class Octree:
         self.NumNodes = 0
         self.TreewalkIndices = -ones(points.shape[0], dtype=np.int64)
         self.HasQuads = quadrupole
+        self.HasCoincidentPoints = False
 
         radix_path = radix and morton_order
         children = -ones((1, 8), dtype=np.int64)  # unused on the radix path; typing placeholder
@@ -474,6 +479,7 @@ class Octree:
                             if self.Coordinates[i, k] != self.Coordinates[child_candidate, k]:
                                 same_coord = False
                         if same_coord:
+                            self.HasCoincidentPoints = True
                             self.Coordinates[i] *= np.exp(3e-16 * (np.random.rand(3) - 0.5))  # random perturbation
                             points[i] = self.Coordinates[i]
                             no = self.NumParticles  # restart the tree traversal
@@ -715,6 +721,7 @@ class Octree:
         Seeds moments the same way the digit loop does. The caller must have reserved enough node
         slots for the whole chain, since growing the tree here would leave acc/parent behind.
         """
+        self.HasCoincidentPoints = True  # only reachable for bit-identical positions
         count = hi - lo
         cur = node
         slot = 0
