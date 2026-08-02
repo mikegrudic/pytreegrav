@@ -61,8 +61,9 @@ def main():
     warm_p, warm_m = plummer(256)
     warm_h = np.zeros(256)
     for meth in ("tree", "bruteforce"):
-        Accel(warm_p, warm_m, warm_h, method=meth, parallel=True)
-        Potential(warm_p, warm_m, warm_h, method=meth, parallel=True)
+        for quad in (False, True) if meth == "tree" else (False,):
+            Accel(warm_p, warm_m, warm_h, method=meth, parallel=True, quadrupole=quad)
+            Potential(warm_p, warm_m, warm_h, method=meth, parallel=True, quadrupole=quad)
 
     print(f"N = {args.N}, softening = {args.softening}, threads = {get_num_threads()}")
     t0 = time.perf_counter()

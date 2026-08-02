@@ -90,6 +90,11 @@ def _accel_quad(no, a, b, pos, soft, tree, acc):
 
     Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes
     add the quadrupole correction.
+
+    The quadrupole components and the separation vector are held in scalars.  Taking a
+    ``tree.Quadrupoles[no]`` view or an ``np.empty(3)`` inside the target loop costs an NRT
+    allocation per target, and the resulting allocator contention made this kernel *anti-scale*:
+    slower on 8 threads than on 1, and ~30x the monopole cost at 32 threads.
     """
     cx = tree.Coordinates[no, 0]
     cy = tree.Coordinates[no, 1]
@@ -97,12 +102,22 @@ def _accel_quad(no, a, b, pos, soft, tree, acc):
     M = tree.Masses[no]
     hs = tree.Softenings[no]
     is_node = no >= tree.NumParticles  # only nodes carry quadrupole moments
-    d = np.empty(3, dtype=np.float64)
+    qxx = qxy = qxz = qyx = qyy = qyz = qzx = qzy = qzz = 0.0
+    if is_node:  # loop-invariant: load once, not once per target
+        qxx = tree.Quadrupoles[no, 0, 0]
+        qxy = tree.Quadrupoles[no, 0, 1]
+        qxz = tree.Quadrupoles[no, 0, 2]
+        qyx = tree.Quadrupoles[no, 1, 0]
+        qyy = tree.Quadrupoles[no, 1, 1]
+        qyz = tree.Quadrupoles[no, 1, 2]
+        qzx = tree.Quadrupoles[no, 2, 0]
+        qzy = tree.Quadrupoles[no, 2, 1]
+        qzz = tree.Quadrupoles[no, 2, 2]
     for t in range(a, b):
-        d[0] = cx - pos[t, 0]
-        d[1] = cy - pos[t, 1]
-        d[2] = cz - pos[t, 2]
-        r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+        dx = cx - pos[t, 0]
+        dy = cy - pos[t, 1]
+        dz = cz - pos[t, 2]
+        r2 = dx * dx + dy * dy + dz * dz
         if r2 > 0:
             r = sqrt(r2)
             ht = max(hs, soft[t])
@@ -110,22 +125,18 @@ def _accel_quad(no, a, b, pos, soft, tree, acc):
                 fac = M * ForceKernel(r, ht)
             else:
                 fac = M / (r * r2)
-            acc[t - a, 0] += fac * d[0]  # monopole
-            acc[t - a, 1] += fac * d[1]
-            acc[t - a, 2] += fac * d[2]
+            acc[t - a, 0] += fac * dx  # monopole
+            acc[t - a, 1] += fac * dy
+            acc[t - a, 2] += fac * dz
             if is_node:
-                quad = tree.Quadrupoles[no]
                 r5inv = 1.0 / (r2 * r2 * r)
-                quad_fac = 0.0
-                for k in range(3):
-                    for l in range(3):
-                        quad_fac += quad[k, l] * d[k] * d[l]
-                quad_fac *= r5inv / r2
-                for k in range(3):
-                    val = 2.5 * quad_fac * d[k]
-                    for l in range(3):
-                        val -= quad[k, l] * d[l] * r5inv
-                    acc[t - a, k] += val
+                qdx = qxx * dx + qxy * dy + qxz * dz
+                qdy = qyx * dx + qyy * dy + qyz * dz
+                qdz = qzx * dx + qzy * dy + qzz * dz
+                quad_fac = (dx * qdx + dy * qdy + dz * qdz) * r5inv / r2
+                acc[t - a, 0] += 2.5 * quad_fac * dx - qdx * r5inv
+                acc[t - a, 1] += 2.5 * quad_fac * dy - qdy * r5inv
+                acc[t - a, 2] += 2.5 * quad_fac * dz - qdz * r5inv
 
 
 @njit(inline="always", fastmath=True)
@@ -133,32 +144,43 @@ def _pot_quad(no, a, b, pos, soft, tree, acc):
     """Add source ``no``'s potential to every target in [a, b), with the quadrupole term for nodes.
 
     Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes
-    add the quadrupole correction.
+    add the quadrupole correction.  Components are hoisted out of the target loop for the same
+    allocation reason as in :func:`_accel_quad`.
     """
     cx = tree.Coordinates[no, 0]
     cy = tree.Coordinates[no, 1]
     cz = tree.Coordinates[no, 2]
     M = tree.Masses[no]
     hs = tree.Softenings[no]
-    is_node = no >= tree.NumParticles
-    d = np.empty(3, dtype=np.float64)
+    is_node = no >= tree.NumParticles  # only nodes carry quadrupole moments
+    qxx = qxy = qxz = qyx = qyy = qyz = qzx = qzy = qzz = 0.0
+    if is_node:  # loop-invariant: load once, not once per target
+        qxx = tree.Quadrupoles[no, 0, 0]
+        qxy = tree.Quadrupoles[no, 0, 1]
+        qxz = tree.Quadrupoles[no, 0, 2]
+        qyx = tree.Quadrupoles[no, 1, 0]
+        qyy = tree.Quadrupoles[no, 1, 1]
+        qyz = tree.Quadrupoles[no, 1, 2]
+        qzx = tree.Quadrupoles[no, 2, 0]
+        qzy = tree.Quadrupoles[no, 2, 1]
+        qzz = tree.Quadrupoles[no, 2, 2]
     for t in range(a, b):
-        d[0] = cx - pos[t, 0]
-        d[1] = cy - pos[t, 1]
-        d[2] = cz - pos[t, 2]
-        r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+        dx = cx - pos[t, 0]
+        dy = cy - pos[t, 1]
+        dz = cz - pos[t, 2]
+        r2 = dx * dx + dy * dy + dz * dz
         if r2 > 0:
             r = sqrt(r2)
             ht = max(hs, soft[t])
             if is_node:
                 acc[t - a, 0] += -M / r  # accepted node: r > h, point mass
-                quad = tree.Quadrupoles[no]
                 r5inv = 1.0 / (r * r2 * r2)
-                s = 0.0
-                for k in range(3):
-                    for l in range(3):
-                        s += d[k] * quad[k, l] * d[l]
-                acc[t - a, 0] += -0.5 * s * r5inv
+                sq = (
+                    dx * (qxx * dx + qxy * dy + qxz * dz)
+                    + dy * (qyx * dx + qyy * dy + qyz * dz)
+                    + dz * (qzx * dx + qzy * dy + qzz * dz)
+                )
+                acc[t - a, 0] += -0.5 * sq * r5inv
             elif r < ht:
                 acc[t - a, 0] += M * PotentialKernel(r, ht)
             else:
@@ -243,9 +265,7 @@ def _make_core(kernel, parallel):
                         dzm = cz - bmax2
                     r_min = sqrt(dxm * dxm + dym * dym + dzm * dzm)
                     h = max(tree.Softenings[no], hmax)
-                    if no < tree.NumParticles or acceptance_criterion(
-                        r_min, h, tree.Sizes[no], tree.Deltas[no], theta
-                    ):
+                    if no < tree.NumParticles or acceptance_criterion(r_min, h, tree.Sizes[no], tree.Deltas[no], theta):
                         kernel(no, a, b, pos, soft, tree, acc)
                         no = tree.NextBranch[no]
                     else:
