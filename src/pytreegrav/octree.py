@@ -218,7 +218,8 @@ def RollupMoments(tree, acc, parent, node_hi):
     by the split, to place children, and here, to get Deltas. Reading that centre and replacing
     it with the centre of mass in the same step is safe: the split is finished with it.
 
-    Monopole only; callers with HasQuads use ComputeMomentsLinked instead.
+    Monopole only. Quadrupoles need each parent's centre of mass to shift onto, so they come
+    from RollupQuadrupoles in a second pass once this one has finished.
     """
     npart = tree.NumParticles
     for node in range(node_hi - 1, npart - 1, -1):
@@ -241,6 +242,75 @@ def RollupMoments(tree, acc, parent, node_hi):
                 acc[pa, k] += acc[a, k]
             tree.Masses[p] += m
             tree.Softenings[p] = max(tree.Softenings[p], tree.Softenings[node])
+
+
+@njit(inline="always")
+def _shift_quad_into(Q, p, m, r0, r1, r2):
+    """Add a mass m displaced by r from node p's centre of mass into p's quadrupole.
+
+    The parallel-axis term of the reduced (traceless) quadrupole: m * (3 r_k r_l - delta_kl r^2).
+    Written out rather than looped over k,l so nothing has to allocate a length-3 vector inside
+    the per-particle loop.
+    """
+    rsq = r0 * r0 + r1 * r1 + r2 * r2
+    Q[p, 0, 0] += m * (3.0 * r0 * r0 - rsq)
+    Q[p, 0, 1] += m * 3.0 * r0 * r1
+    Q[p, 0, 2] += m * 3.0 * r0 * r2
+    Q[p, 1, 0] += m * 3.0 * r1 * r0
+    Q[p, 1, 1] += m * (3.0 * r1 * r1 - rsq)
+    Q[p, 1, 2] += m * 3.0 * r1 * r2
+    Q[p, 2, 0] += m * 3.0 * r2 * r0
+    Q[p, 2, 1] += m * 3.0 * r2 * r1
+    Q[p, 2, 2] += m * (3.0 * r2 * r2 - rsq)
+
+
+@njit
+def RollupQuadrupoles(tree, parent, pparent, node_hi):
+    """Second bottom-up pass giving every node its quadrupole, again with no traversal.
+
+    Must run after RollupMoments: shifting a child's moment onto its parent needs the parent's
+    centre of mass, Q_p += Q_c + m_c (3 r r - r^2 I) with r = com_c - com_p, and that is only
+    known once the monopole pass has finished.
+
+    Two stages, in this order:
+
+      1. every particle into the node that owns it (a particle's own quadrupole is zero, so it
+         contributes the shift term alone).  `pparent` is recorded by the split, which sees each
+         particle leaf while standing on its parent;
+      2. every node into its parent, indices descending.  By the time a node is reached its own
+         quadrupole is complete -- its node children were pushed earlier in this same descending
+         scan, and all of its particle children were pushed in stage 1.
+
+    Both stages are streaming scans over contiguous index ranges, like RollupMoments.
+    """
+    npart = tree.NumParticles
+    Q = tree.Quadrupoles
+    C = tree.Coordinates
+    for i in range(npart):
+        p = pparent[i]
+        if p < npart:
+            continue  # unreachable on a well-formed tree; a stray particle contributes nothing
+        _shift_quad_into(Q, p, tree.Masses[i], C[i, 0] - C[p, 0], C[i, 1] - C[p, 1], C[i, 2] - C[p, 2])
+    for node in range(node_hi - 1, npart - 1, -1):
+        p = parent[node - npart]
+        if p < npart:
+            continue  # the root, which has no parent to shift onto
+        m = tree.Masses[node]
+        if m == 0.0:
+            continue
+        r0 = C[node, 0] - C[p, 0]
+        r1 = C[node, 1] - C[p, 1]
+        r2 = C[node, 2] - C[p, 2]
+        Q[p, 0, 0] += Q[node, 0, 0]
+        Q[p, 0, 1] += Q[node, 0, 1]
+        Q[p, 0, 2] += Q[node, 0, 2]
+        Q[p, 1, 0] += Q[node, 1, 0]
+        Q[p, 1, 1] += Q[node, 1, 1]
+        Q[p, 1, 2] += Q[node, 1, 2]
+        Q[p, 2, 0] += Q[node, 2, 0]
+        Q[p, 2, 1] += Q[node, 2, 1]
+        Q[p, 2, 2] += Q[node, 2, 2]
+        _shift_quad_into(Q, p, m, r0, r1, r2)
 
 
 @njit
@@ -318,12 +388,13 @@ class Octree:
         children = -ones((1, 8), dtype=np.int64)  # unused on the radix path; typing placeholder
         acc = zeros((1, 3))  # typing placeholders, replaced on the radix path
         parent = -ones(1, dtype=np.int64)
+        pparent = -ones(1, dtype=np.int64)
         node_hi = 0
         if radix_path:
             # Radix-sort build: a single linear pass over Morton-sorted points produces the tree
             # already in Morton order, and links FirstSubnode/NextBranch as it goes -- so there is
             # no `children` table (0.96 GB at N=1e7, two-thirds of it unused) and no SetupTreewalk.
-            node_hi, acc, parent = self.BuildTreeRadix(points, masses, softening)
+            node_hi, acc, parent, pparent = self.BuildTreeRadix(points, masses, softening)
         else:
             # Legacy insertion build (used for radix=False or morton_order=False).
             # first provisional treebuild to get the ordering right
@@ -344,14 +415,14 @@ class Octree:
 
         if compute_moments:
             # compute centers of mass, etc.
-            if radix_path and not quadrupole:
-                # The split already folded in every particle, so this is a reverse linear scan
-                # rather than a tree traversal. Quadrupoles need a second bottom-up pass (the
-                # parallel-axis shift needs the parent's COM, unknown until the first finishes),
-                # so they keep the traversal.
+            if radix_path:
+                # The split already folded in every particle, so these are reverse linear scans
+                # over the node array rather than tree traversals.
                 RollupMoments(self, acc, parent, node_hi)
-            elif radix_path:
-                ComputeMomentsLinked(self, self.NumParticles)
+                if quadrupole:
+                    # Separate pass: the parallel-axis shift needs each parent's COM, which is
+                    # only known once RollupMoments has finished.
+                    RollupQuadrupoles(self, parent, pparent, node_hi)
             else:
                 ComputeMoments(self, self.NumParticles, children)
 
@@ -445,8 +516,9 @@ class Octree:
         softening are folded straight in, and `parent` records each node's parent. RollupMoments
         then finishes the job with one reverse scan instead of a tree traversal.
 
-        Returns (new_node_idx, acc, parent), where acc holds the running sum of mass * position
-        for each node and both arrays are indexed by (node - NumParticles).
+        Returns (new_node_idx, acc, parent, pparent), where acc holds the running sum of
+        mass * position and parent the owning node, both indexed by (node - NumParticles), and
+        pparent maps each particle to its owning node (populated only when HasQuads).
         """
         N = points.shape[0]
 
@@ -490,6 +562,9 @@ class Octree:
         nnode = self.NumNodes - self.NumParticles
         acc = zeros((nnode, 3))
         parent = -ones(nnode, dtype=np.int64)
+        # Which node owns each particle. Only the quadrupole rollup needs it (the monopole folds
+        # particles in during the split), so it stays length-1 otherwise rather than costing 8N.
+        pparent = -ones(N if self.HasQuads else 1, dtype=np.int64)
         bs = np.empty(8, dtype=np.int64)  # scratch for the per-octant run boundaries
         be = np.empty(8, dtype=np.int64)
         bd = np.empty(8, dtype=np.int64)
@@ -528,7 +603,7 @@ class Octree:
                         size_increase = increase_tree_size(self)
                     if acc.shape[0] < self.NumNodes - self.NumParticles:
                         acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
-                    new_node_idx = self.BuildBucket(node, lo, hi, new_node_idx, acc, parent)
+                    new_node_idx = self.BuildBucket(node, lo, hi, new_node_idx, acc, parent, pparent)
                     continue
                 # re-key this group relative to the node's (sub-)cell and re-sort the slice
                 self.RekeySlice(keys_sorted, node, lo, hi)
@@ -555,6 +630,8 @@ class Octree:
                     for k in range(3):
                         acc[an, k] += mi * self.Coordinates[i, k]
                     self.Softenings[node] = max(self.Softenings[node], self.Softenings[i])
+                    if self.HasQuads:
+                        pparent[i] = node  # the quadrupole shift needs this node's COM later
                 else:  # >1 particle in this octant -> create a child node and recurse
                     while new_node_idx + 1 > self.NumNodes:
                         size_increase = increase_tree_size(self)
@@ -588,7 +665,7 @@ class Octree:
             if last_child >= 0:
                 self.NextBranch[last_child] = self.NextBranch[node]
 
-        return new_node_idx, acc, parent
+        return new_node_idx, acc, parent, pparent
 
     def RekeySlice(self, keys_sorted, node, lo, hi):
         """Recompute Morton keys for particles [lo, hi) relative to node's cell and re-sort them.
@@ -628,7 +705,7 @@ class Octree:
             self.TreewalkIndices[lo + a] = new_idx[a]
             keys_sorted[lo + a] = new_keys[a]
 
-    def BuildBucket(self, node, lo, hi, new_node_idx, acc, parent):
+    def BuildBucket(self, node, lo, hi, new_node_idx, acc, parent, pparent):
         """Attach particles [lo, hi), coincident to float precision, as a chain of nodes under node.
 
         Each node holds up to 8 particle children; when more remain, the 8th slot links to a
@@ -667,6 +744,8 @@ class Octree:
             for k in range(3):
                 acc[ac, k] += mi * self.Coordinates[c, k]
             self.Softenings[cur] = max(self.Softenings[cur], self.Softenings[c])
+            if self.HasQuads:
+                pparent[c] = cur
             if last < 0:
                 self.FirstSubnode[cur] = c
             else:
