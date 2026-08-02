@@ -43,7 +43,7 @@ print(Potential(x,m,h))
      -1.80464695]
 
 
-By default, pytreegrav will try to make the optimal choice between brute-force and tree methods for speed, but we can also force it to use one method or another. Let's try both and compare their runtimes:
+By default, pytreegrav will try to make the optimal choice between brute-force and tree methods for speed, but we can also force it to use one method or another. Let's try both and compare their runtimes (all timings quoted in this walkthrough are single-core, on an otherwise-idle Intel Xeon Gold 6244):
 
 
 ```python
@@ -63,10 +63,10 @@ phi_bruteforce = Potential(x,m,h,method='bruteforce')
 print("Brute force potential runtime: %gs"%(time() - t)); t = time()
 ```
 
-    Tree accel runtime: 0.927745s
-    Brute force accel runtime: 44.1175s
-    Tree potential runtime: 0.802386s
-    Brute force potential runtime: 20.0234s
+    Tree accel runtime: 0.556318s
+    Brute force accel runtime: 40.9757s
+    Tree potential runtime: 0.326653s
+    Brute force potential runtime: 18.9015s
 
 
 As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding a few thousand. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel Xeon Gold 6244 workstation:
@@ -83,8 +83,8 @@ phi_error = np.std(phi_tree - phi_bruteforce)
 print("RMS potential error: ", phi_error)
 ```
 
-    RMS force error:  0.0039012
-    RMS potential error:  0.00025316
+    RMS force error:  0.00390130
+    RMS potential error:  0.00025342
 
 
 The above errors are typical for default settings: ~0.2% RMS force error and ~0.1% RMS potential error (relative to the RMS field strength). The error in the tree approximation is controlled by the Barnes-Hut opening angle ``theta``, set to 0.7 by default. Smaller ``theta`` gives higher accuracy, but also runs slower:
@@ -99,10 +99,10 @@ for theta in thetas:
     print("theta=%g Runtime: %gs RMS force error: %g"%(theta, time()-t, acc_error))
 ```
 
-    theta=0.1 Runtime: 63.1738s RMS force error: 3.78978e-05
-    theta=0.2 Runtime: 14.3356s RMS force error: 0.000258755
-    theta=0.4 Runtime: 2.91292s RMS force error: 0.00148698
-    theta=0.8 Runtime: 0.724668s RMS force error: 0.0105937
+    theta=0.1 Runtime: 19.4092s RMS force error: 2.62033e-05
+    theta=0.2 Runtime: 5.70894s RMS force error: 0.000161552
+    theta=0.4 Runtime: 1.46086s RMS force error: 0.00087864
+    theta=0.8 Runtime: 0.430208s RMS force error: 0.00618697
 
 
 ## Accuracy versus cost
@@ -174,21 +174,21 @@ N_target = 10**4
 x_target = np.random.rand(N_target,3)
 h_target = np.repeat(0.01,N_target) # optional "target" softening: this sets a floor on the softening length of all forces/potentials computed
 
-accel_tree = AccelTarget(x_target, x,m, h_target=h_target, h_source=h,method='tree') # we provide the points/masses/softenings we generated before as the "source" particles
-accel_bruteforce = AccelTarget(x_target,x,m,h_source=h,method='bruteforce')
+accel_tree = AccelTarget(x_target, x,m, softening_target=h_target, softening_source=h,method='tree') # we provide the points/masses/softenings we generated before as the "source" particles
+accel_bruteforce = AccelTarget(x_target,x,m,softening_source=h,method='bruteforce')
 
 acc_error = np.sqrt(np.mean(np.sum((accel_tree-accel_bruteforce)**2,axis=1))) # RMS force error
 print("RMS force error: ", acc_error)
 
-phi_tree = PotentialTarget(x_target, x,m, h_target=h_target, h_source=h,method='tree') # we provide the points/masses/softenings we generated before as the "source" particles
-phi_bruteforce = PotentialTarget(x_target,x,m,h_target=h_target, h_source=h,method='bruteforce')
+phi_tree = PotentialTarget(x_target, x,m, softening_target=h_target, softening_source=h,method='tree') # we provide the points/masses/softenings we generated before as the "source" particles
+phi_bruteforce = PotentialTarget(x_target,x,m,softening_target=h_target, softening_source=h,method='bruteforce')
 
 phi_error = np.std(phi_tree - phi_bruteforce)
 print("RMS potential error: ", phi_error)
 ```
 
-    RMS force error:  0.006719983300560105
-    RMS potential error:  0.0003873676304955059
+    RMS force error:  0.0029070938409950310
+    RMS potential error:  0.00018373931733379673
 
 # Ray-tracing
 
