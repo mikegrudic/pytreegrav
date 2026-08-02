@@ -570,6 +570,46 @@ def _split_subtree(
     return next_idx, nd
 
 
+@njit(cache=True)
+def _bounding_cube(points):
+    """(centre, side) of the smallest cube covering points, as BuildTree defines it: per-dimension
+    midpoint centre, side = the largest per-dimension extent.
+
+    One fused row-major pass. The obvious `points[:, dim].min()` per dimension walks the array six
+    times with a 24-byte stride. Min and max are order-independent, so this is bit-identical.
+    """
+    n = points.shape[0]
+    lo0 = hi0 = points[0, 0]
+    lo1 = hi1 = points[0, 1]
+    lo2 = hi2 = points[0, 2]
+    for i in range(1, n):
+        x = points[i, 0]
+        y = points[i, 1]
+        z = points[i, 2]
+        if x < lo0:
+            lo0 = x
+        elif x > hi0:
+            hi0 = x
+        if y < lo1:
+            lo1 = y
+        elif y > hi1:
+            hi1 = y
+        if z < lo2:
+            lo2 = z
+        elif z > hi2:
+            hi2 = z
+    center = zeros(3)
+    center[0] = 0.5 * (hi0 + lo0)
+    center[1] = 0.5 * (hi1 + lo1)
+    center[2] = 0.5 * (hi2 + lo2)
+    size = hi0 - lo0
+    if hi1 - lo1 > size:
+        size = hi1 - lo1
+    if hi2 - lo2 > size:
+        size = hi2 - lo2
+    return center, size
+
+
 @njit(parallel=True, cache=True)
 def _permute_particles(order, points, masses, softening, keys, Coord, Mass, Soft, keys_sorted):
     """Gather particle data into Morton order.
@@ -836,14 +876,7 @@ class Octree:
         N = points.shape[0]
 
         # --- root cube: per-dimension midpoint center, side = maximum extent (matches BuildTree) ---
-        center = zeros(3)
-        size = 0.0
-        for dim in range(3):
-            lo = points[:, dim].min()
-            hi = points[:, dim].max()
-            center[dim] = 0.5 * (hi + lo)
-            if hi - lo > size:
-                size = hi - lo
+        center, size = _bounding_cube(points)
 
         # --- Morton keys + radix sort give the Morton ordering directly ---
         keys = _morton_keys(points, center, size)
@@ -1225,7 +1258,6 @@ class Octree:
             self.Quadrupoles = zeros((self.NumNodes, 3, 3))
         self.Softenings = zeros(self.NumNodes)
         self.Coordinates = zeros((self.NumNodes, 3))
-        self.Deltas = zeros(self.NumNodes)
         self.NextBranch = -ones(self.NumNodes, dtype=np.int64)
         self.FirstSubnode = -ones(self.NumNodes, dtype=np.int64)
 

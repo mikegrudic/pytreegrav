@@ -134,7 +134,6 @@ class DynamicOctree(object):
         self.Coordinates = zeros((self.NumNodes, 3))
         self.Velocities = zeros((self.NumNodes, 3))
         self.VelocityDisp = zeros(self.NumNodes)
-        self.Deltas = zeros(self.NumNodes)
         self.NextBranch = -ones(self.NumNodes, dtype=np.int64)
         self.FirstSubnode = -ones(self.NumNodes, dtype=np.int64)
         #        self.ParentNode = -ones(self.NumNodes, dtype=np.int64)
