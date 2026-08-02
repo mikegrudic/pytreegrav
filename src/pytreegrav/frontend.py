@@ -790,7 +790,7 @@ def VelocityStructFunc(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Computes the structure function for a vector field: the average value of |v(x)-v(x+r)|^2, in radial bins for r
+    """Computes the structure function for a vector field: the average value of (v(x) - v(x+r))^2, in radial bins for r
 
     Parameters
     ----------
