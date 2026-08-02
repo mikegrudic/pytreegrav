@@ -69,7 +69,7 @@ print("Brute force potential runtime: %gs"%(time() - t)); t = time()
     Brute force potential runtime: 20.0234s
 
 
-As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding a few thousand. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel Xeon Gold 6244 workstation (brute force is stopped at 10^5, where it already costs ~200x more per particle):
+As you can see, the tree-based methods can be much faster than the brute-force methods, especially for particle counts exceeding a few thousand. Here's an example of how much faster the treecode is when run on a Plummer sphere with a variable number of particles, on a single core of an Intel Xeon Gold 6244 workstation:
 ![Benchmark](images/CPU_Time_serial.png)
 
 
