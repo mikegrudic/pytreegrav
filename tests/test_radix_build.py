@@ -1,6 +1,11 @@
 """Tests for the radix-sort octree build (drop-in replacement for the insertion build)."""
 
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
+import pytest
 from pytreegrav.frontend import ConstructTree, AccelTarget, PotentialTarget
 
 
@@ -103,3 +108,164 @@ def test_radix_tiny_N():
         t = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=True)
         assert np.isclose(t.Masses[t.NumParticles], m.sum())
         assert np.array_equal(np.sort(t.TreewalkIndices), np.arange(N))
+
+
+def _walk_particles(tree):
+    """Every particle reached by fully opening the tree, via FirstSubnode/NextBranch only.
+
+    Mirrors how the treewalk traverses: descend into FirstSubnode, and on reaching a leaf take
+    NextBranch. Returns the particle indices in visit order.
+    """
+    seen = []
+    no = tree.NumParticles  # root
+    # hard cap: a mislinked chain can cycle forever, and a hung test is useless in CI
+    for _ in range(4 * tree.NumNodes + 16):
+        if no <= -1:
+            return np.array(seen)
+        if no < tree.NumParticles:  # a particle
+            seen.append(no)
+            no = tree.NextBranch[no]
+        else:
+            no = tree.FirstSubnode[no]
+    raise AssertionError("treewalk did not terminate: FirstSubnode/NextBranch chain has a cycle")
+
+
+def test_treewalk_links_reach_every_particle_once():
+    """The radix build now writes FirstSubnode/NextBranch inline instead of deriving them in a
+    separate SetupTreewalk pass over a `children` table. A mislinked sibling chain would silently
+    drop or revisit particles while still producing plausible-looking forces, so check the
+    traversal directly: fully opening the tree must visit each particle exactly once.
+    """
+    for n, gen in ((1, "single"), (2, "pair"), (997, "random"), (5000, "random")):
+        rng = np.random.default_rng(n)
+        x = rng.random((n, 3))
+        m = np.repeat(1.0 / n, n)
+        h = np.zeros(n)
+        tree = ConstructTree(np.float64(x), np.float64(m), np.float64(h))
+        got = _walk_particles(tree)
+        assert np.array_equal(np.sort(got), np.arange(n)), f"n={n} ({gen}): traversal is not a permutation"
+
+
+def test_treewalk_links_reach_every_particle_with_duplicates():
+    """Coincident particles go down BuildBucket's chained-node path, which does its own linking."""
+    import warnings
+
+    rng = np.random.default_rng(11)
+    base = rng.random((800, 3))
+    x = np.vstack([base, base[:200]])  # 200 exact duplicates
+    n = len(x)
+    m = np.repeat(1.0 / n, n)
+    h = np.repeat(0.01, n)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tree = ConstructTree(np.float64(x), np.float64(m), np.float64(h))
+    assert np.array_equal(np.sort(_walk_particles(tree)), np.arange(n))
+
+
+def test_node_masses_equal_sum_of_children():
+    """Each internal node's mass must equal the sum over its child chain.
+
+    ComputeMoments now iterates children by following NextBranch from FirstSubnode until it
+    reaches NextBranch[node], rather than reading a child table. If that chain terminates early
+    the node's moments are computed from a subset of its children -- mass is the sharpest probe.
+    """
+    n = 4000
+    rng = np.random.default_rng(5)
+    x = rng.random((n, 3))
+    m = rng.random(n) / n
+    h = np.zeros(n)
+    tree = ConstructTree(np.float64(x), np.float64(m), np.float64(h))
+    for no in range(tree.NumParticles, tree.NumNodes):
+        if tree.FirstSubnode[no] < 0:
+            continue  # not an allocated internal node
+        stop = tree.NextBranch[no]
+        c = tree.FirstSubnode[no]
+        total = 0.0
+        nkids = 0
+        while c != stop and nkids <= 8:
+            total += tree.Masses[c]
+            c = tree.NextBranch[c]
+            nkids += 1
+        assert nkids <= 8, f"node {no} has a runaway child chain"
+        assert np.isclose(total, tree.Masses[no], rtol=1e-12), f"node {no}: children sum {total} != {tree.Masses[no]}"
+
+
+def _build_and_dump(nmin, n, seed, dup):
+    """Build in a subprocess with PARALLEL_SPLIT_NMIN forced, and dump the tree's fingerprint.
+
+    The constant has to be set before the first ConstructTree call: numba freezes module globals
+    at compile time, so assigning it afterwards is silently ignored (a mistake that made an
+    earlier serial-vs-parallel benchmark report a spurious 1.00x, because both runs were serial).
+    Hence a fresh interpreter per configuration.
+    """
+    src = textwrap.dedent(f"""
+        import warnings, numpy as np
+        warnings.simplefilter("ignore")
+        import pytreegrav.octree as om
+        om.PARALLEL_SPLIT_NMIN = {nmin}      # baked in at first compile, below
+        from pytreegrav import ConstructTree
+        rng = np.random.default_rng({seed})
+        x = rng.random(({n}, 3))
+        if {dup}:
+            x[:{dup}] = x[0]                 # force the deferred re-keying path
+        m = rng.random({n}) / {n}
+        h = rng.random({n}) * 0.01
+        t = ConstructTree(x, m, h)
+        nn = t.NumParticles
+        First, Next = np.asarray(t.FirstSubnode), np.asarray(t.NextBranch)
+        M, C, D, S = (np.asarray(a) for a in (t.Masses, t.Coordinates, t.Deltas, t.Softenings))
+        # Walk the links and fingerprint what the traversal sees. Node *indices* legitimately
+        # differ between the two paths -- serial numbers nodes in DFS order, parallel gives each
+        # frontier subtree its own block -- so anything index-keyed would compare unequal even
+        # when the trees are identical.
+        order, nodes, st = [], [], [nn]
+        # Bounded: a mis-budgeted parallel run produces overlapping node blocks and hence a
+        # cyclic sibling chain, which an unbounded walk would spin on forever instead of
+        # reporting. Ask me how I know.
+        budget = 8 * t.NumNodes + 64
+        while st:
+            budget -= 1
+            if budget < 0:
+                raise AssertionError("link chain does not terminate: node blocks overlap")
+            no = st.pop()
+            if no < nn:
+                order.append(no)
+                continue
+            nodes.append((M[no], C[no, 0], C[no, 1], C[no, 2], D[no], S[no]))
+            kids, c, stop = [], First[no], Next[no]
+            while c != -1 and c != stop:
+                kids.append(c)
+                c = Next[c]
+                if len(kids) > 8:
+                    raise AssertionError("more than 8 children: sibling chain is corrupt")
+            st.extend(reversed(kids))
+        print(int(om.PARALLEL_SPLIT_NMIN <= {n}))
+        print(",".join(str(v) for v in order))
+        print(",".join(repr(float(v)) for row in nodes for v in row))
+        print(f"{{len(nodes)}} {{repr(float(M[nn]))}}")
+    """)
+    r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, f"build failed (rc={r.returncode}): {r.stderr[-2000:]}"
+    used_parallel, order, nodes, summary = r.stdout.strip().split("\n")
+    return used_parallel == "1", order, nodes, summary
+
+
+@pytest.mark.parametrize("dup", [0, 40])
+def test_parallel_split_matches_serial(dup):
+    """The parallel split must produce exactly the tree the serial split produces.
+
+    Each worker builds one frontier subtree into a private, exactly-sized block of node indices,
+    so the node numbering and hence the whole structure should be reproduced bit-for-bit -- there
+    is no reordering or floating-point reassociation anywhere in the split.
+
+    dup=40 forces the deferred path: groups whose Morton key is exhausted cannot be budgeted for
+    (re-keying permutes particle data and its node count is not predictable), so workers hand
+    them back and the serial loop finishes them afterwards.
+    """
+    n = 60_000  # above PARALLEL_SPLIT_NMIN, so the parallel path is taken
+    par, order_p, nodes_p, summary_p = _build_and_dump(1, n, 5, dup)
+    ser, order_s, nodes_s, summary_s = _build_and_dump(10**12, n, 5, dup)
+    assert par and not ser, "the two runs did not exercise different split paths"
+    assert summary_p == summary_s, f"node count or total mass differs: {summary_p} vs {summary_s}"
+    assert order_p == order_s, "parallel split changed the treewalk order"
+    assert nodes_p == nodes_s, "parallel split changed node moments or geometry"

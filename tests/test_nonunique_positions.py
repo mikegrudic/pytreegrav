@@ -20,6 +20,9 @@ What this module pins down:
     about. The warning is the contract, so the warning is what we test.
 """
 
+import subprocess
+import sys
+import textwrap
 import warnings
 
 import numpy as np
@@ -113,6 +116,95 @@ def test_softened_duplicates_warn_differently():
     with pytest.warns(UserWarning, match="non-unique") as rec:
         ConstructTree(x, m, h)
     assert any("Softening will" in str(w.message) for w in rec)
+
+
+def test_dynamic_tree_survives_duplicates():
+    """DynamicOctree allocated exactly 2*N node slots and never checked the bound, so any input
+    needing more wrote past the end of every node array -- SIGSEGV, not an exception, which is
+    why no amount of pytest.raises would have caught it.
+
+    Duplicates are the easy way to get there: they are perturbed apart by only ~3e-16, and
+    separating two points that close takes a chain of ~50 subdivisions, so each duplicated pair
+    costs that many extra nodes. Runs in a subprocess because a segfault takes the whole test
+    session down with it, which would look like an infrastructure failure rather than a bug.
+    """
+    src = textwrap.dedent("""
+        import warnings, numpy as np
+        warnings.simplefilter("ignore")
+        from pytreegrav import ConstructTree
+        rng = np.random.default_rng(3)
+        base = rng.random((2000, 3))
+        x = np.vstack([base, base[:200]])
+        m = np.repeat(1.0 / len(x), len(x))
+        h = np.repeat(0.02, len(x))
+        v = rng.random((len(x), 3))
+        tree = ConstructTree(x, m, h, vel=v)
+        assert tree.HasCoincidentPoints
+        assert np.isclose(tree.Masses[tree.NumParticles], m.sum())
+        assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(len(x)))
+        print("OK")
+    """)
+    r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, f"DynamicOctree died on duplicates (rc={r.returncode}): {r.stderr[-2000:]}"
+    assert "OK" in r.stdout
+
+
+def test_dynamic_tree_matches_static_without_duplicates():
+    """The growth path must not perturb the ordinary case: same tree as before, same mass."""
+    rng = np.random.default_rng(11)
+    x = rng.random((3000, 3))
+    m = np.repeat(1.0 / 3000, 3000)
+    h = np.repeat(0.02, 3000)
+    tree = ConstructTree(x, m, h, vel=rng.random((3000, 3)))
+    assert not tree.HasCoincidentPoints
+    assert np.isclose(tree.Masses[tree.NumParticles], m.sum())
+    assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(3000))
+
+
+@pytest.mark.parametrize("kwargs", ["{'radix': False}", "{'vel': np.zeros((5, 3))}", "{}"])
+def test_duplicates_at_the_origin_terminate(kwargs):
+    """Duplicated particles sitting at exactly [0, 0, 0] must not hang the build.
+
+    Both insertion builds separate coincident particles by nudging one of them, and the nudge
+    used to be multiplicative -- 0.0 * anything is still 0.0, so the two re-tested equal on
+    every retry and the loop never exited. The radix build was unaffected (it buckets them),
+    which is why this hid: the default path was fine.
+
+    A hang cannot be caught in-process, so this runs in a subprocess under a timeout; without
+    the fix the two insertion cases spin until killed.
+    """
+    src = textwrap.dedent(f"""
+        import warnings, numpy as np
+        warnings.simplefilter("ignore")
+        from pytreegrav import ConstructTree
+        x = np.array([[0.,0.,0.],[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]])
+        m, h = np.repeat(0.2, 5), np.repeat(0.1, 5)
+        tree = ConstructTree(x, m, h, **{kwargs})
+        assert tree.HasCoincidentPoints
+        assert np.isclose(tree.Masses[tree.NumParticles], 1.0)
+        assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(5))
+        print("OK")
+    """)
+    try:
+        r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"build with {kwargs} hung on duplicates at the origin")
+    assert r.returncode == 0, f"rc={r.returncode}: {r.stderr[-2000:]}"
+    assert "OK" in r.stdout
+
+
+def test_lattice_positions_do_not_warn():
+    """Every coordinate value repeats on a grid, but no two *positions* coincide. The old check
+    tested per-coordinate uniqueness and so told grid users their answer was garbage."""
+    g = np.arange(20) * 1.0
+    x = np.ascontiguousarray(np.stack(np.meshgrid(g, g, g), -1).reshape(-1, 3))
+    m = np.repeat(1.0 / len(x), len(x))
+    h = np.repeat(0.1, len(x))
+    assert len(np.unique(x, axis=0)) == len(x)  # positions really are all distinct
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning at all fails the test
+        tree = ConstructTree(x, m, h)
+    assert not tree.HasCoincidentPoints
 
 
 def test_unsoftened_bruteforce_stays_finite():

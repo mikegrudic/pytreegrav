@@ -39,31 +39,31 @@ def valueTestMethod(method):
         raise ValueError("Invalid method %s. Must be one of: %s" % (method, str(methods)))
 
 
-def warn_if_nonunique_positions(pos, softening=None):
-    """Checks whether a potential/field calculation will return undefined values
-    and warns the user if so.
+def warn_if_coincident_positions(tree, softening=None):
+    """Warn if the build found particle positions coincident to floating-point precision.
+
+    Asks the tree rather than scanning the input, because the build already had to answer this
+    question exactly: it cannot subdivide coincident points forever, so it detects them either
+    by exhausting the Morton key (the radix build, which then buckets them) or by hitting equal
+    coordinates during insertion (the legacy build, which perturbs them apart). Reading the flag
+    it sets is free.
+
+    The scan this replaces cost 1083 ms of a 1985 ms build at N=1e7 -- np.unique, i.e. a full
+    sort, once per dimension -- and was wrong besides: it tested whether any single *coordinate*
+    repeated rather than any *position*, so any structured input (a lattice, a slab, anything on
+    a grid) was told its answer would be "singular or garbage" while every position was distinct.
     """
-
-    unique_positions = True
-    for i in range(pos.shape[1]):
-        if np.unique(pos[:, i]).size < pos.shape[0]:
-            unique_positions = False
-            break
-
-    if unique_positions:
+    if not tree.HasCoincidentPoints:
         return
 
-    if softening is not None:
-        if np.any(softening > 0):
-            warnings.warn(
-                "Warning: Particle positions are non-unique. Softening will \
-                    determine the answer for overlapping particles."
-            )
-            return
+    if softening is not None and np.any(softening > 0):
+        warnings.warn(
+            "Warning: Particle positions are non-unique. Softening will determine the answer for overlapping particles."
+        )
+        return
 
     warnings.warn(
-        "Warning: Particle positions are non-unique. The answer will be singular \
-            or garbage for overlapping particles."
+        "Warning: Particle positions are non-unique. The answer will be singular or garbage for overlapping particles."
     )
     return
 
@@ -112,8 +112,6 @@ def ConstructTree(
         tree instance built from the particle data
     """
 
-    warn_if_nonunique_positions(pos, softening)
-
     if m is None:
         m = zeros(len(pos))
         compute_moments = False
@@ -124,7 +122,7 @@ def ConstructTree(
         raise
 
     if vel is None:
-        return Octree(
+        tree = Octree(
             pos,
             m,
             softening,
@@ -134,7 +132,11 @@ def ConstructTree(
             radix=radix,
         )
     else:
-        return DynamicOctree(pos, m, softening, vel, quadrupole=quadrupole)
+        tree = DynamicOctree(pos, m, softening, vel, quadrupole=quadrupole)
+
+    # the build detects coincident positions as a side effect, so this costs nothing
+    warn_if_coincident_positions(tree, softening)
+    return tree
 
 
 def Potential(
@@ -197,7 +199,12 @@ def Potential(
 
     # figure out which method to use
     if method == "adaptive":
-        if len(pos) > 1000:
+        # Brute force stays competitive to larger N when it's threaded. 4000 is where the
+        # parallel curves cross on a 32-thread machine (Plummer, theta=0.7): at N=3447 brute
+        # force acceleration is 0.57 us/particle against the tree's 0.67, and by N=6092 it is
+        # 0.95 against 0.68. Potential crosses a little later, nearer 5500, so this favours
+        # acceleration -- the more common call, and the steeper curve to be on the wrong side of.
+        if len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"
@@ -439,7 +446,12 @@ def Accel(
 
     # figure out which method to use
     if method == "adaptive":
-        if len(pos) > 1000:
+        # Brute force stays competitive to larger N when it's threaded. 4000 is where the
+        # parallel curves cross on a 32-thread machine (Plummer, theta=0.7): at N=3447 brute
+        # force acceleration is 0.57 us/particle against the tree's 0.67, and by N=6092 it is
+        # 0.95 against 0.68. Potential crosses a little later, nearer 5500, so this favours
+        # acceleration -- the more common call, and the steeper curve to be on the wrong side of.
+        if len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"

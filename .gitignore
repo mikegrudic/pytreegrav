@@ -21,3 +21,8 @@ venv/
 
 # OS cruft
 .DS_Store
+
+# benchmark_scaling.py / error_benchmark.py write their figures next to the script; the
+# published copies live in images/ and the raw timings in examples/benchmark_scaling.json
+examples/benchmark_scaling.png
+examples/error_benchmark.png
