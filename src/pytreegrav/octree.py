@@ -397,6 +397,12 @@ PARALLEL_SPLIT_NMIN = 30_000
 # and 512 at N=1e7 (697/704/709 ms on 16 threads); 8 is measurably worse at 727 ms.
 FRONTIER_PER_THREAD = 32
 
+# Below this N the thread spawn costs more than the gather saves. Measured on 16 threads, whole
+# build with the permute serial -> parallel: 0.88x at N=2e4, 1.00x at 5e4, 1.04x at 1e5, 1.10x at
+# 1e6, 1.18x at 3e6. Break-even is ~5e4; 1e5 keeps a margin, and the phase itself only becomes
+# worth threading at large N (195ms -> 54ms at N=1e7).
+PARALLEL_PERMUTE_NMIN = 100_000
+
 
 @njit(cache=True)
 def _count_subtree(keys, lo, hi, shift):
@@ -562,6 +568,37 @@ def _split_subtree(
         if last_child >= 0:
             Next[last_child] = Next[node]
     return next_idx, nd
+
+
+@njit(parallel=True, cache=True)
+def _permute_particles(order, points, masses, softening, keys, Coord, Mass, Soft, keys_sorted):
+    """Gather particle data into Morton order.
+
+    A pure gather: each iteration writes one distinct destination row and reads nothing another
+    iteration writes, so it needs no coordination whatsoever. Reads are scattered (that is what a
+    permutation is) but writes are sequential, so the threads mostly stream.
+
+    A free function because prange is unavailable inside a jitclass method.
+    """
+    for i in prange(order.shape[0]):
+        oi = order[i]
+        for dim in range(3):
+            Coord[i, dim] = points[oi, dim]
+        Mass[i] = masses[oi]
+        Soft[i] = softening[oi]
+        keys_sorted[i] = keys[oi]
+
+
+@njit(cache=True)
+def _permute_particles_serial(order, points, masses, softening, keys, Coord, Mass, Soft, keys_sorted):
+    """Serial _permute_particles, for N below the point where spawning threads pays for itself."""
+    for i in range(order.shape[0]):
+        oi = order[i]
+        for dim in range(3):
+            Coord[i, dim] = points[oi, dim]
+        Mass[i] = masses[oi]
+        Soft[i] = softening[oi]
+        keys_sorted[i] = keys[oi]
 
 
 @njit(parallel=True, cache=True)
@@ -817,13 +854,30 @@ class Octree:
 
         # lay out particle data in Morton order; keys is permuted to stay aligned with the arrays
         keys_sorted = np.empty(N, dtype=np.int64)
-        for i in range(N):
-            oi = order[i]
-            for dim in range(3):
-                self.Coordinates[i, dim] = points[oi, dim]
-            self.Masses[i] = masses[oi]
-            self.Softenings[i] = softening[oi]
-            keys_sorted[i] = keys[oi]
+        if N >= PARALLEL_PERMUTE_NMIN:
+            _permute_particles(
+                order,
+                points,
+                masses,
+                softening,
+                keys,
+                self.Coordinates,
+                self.Masses,
+                self.Softenings,
+                keys_sorted,
+            )
+        else:
+            _permute_particles_serial(
+                order,
+                points,
+                masses,
+                softening,
+                keys,
+                self.Coordinates,
+                self.Masses,
+                self.Softenings,
+                keys_sorted,
+            )
 
         # set root node properties
         root = self.NumParticles
