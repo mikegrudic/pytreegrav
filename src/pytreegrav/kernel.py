@@ -1,7 +1,7 @@
 from numba import njit, float64, float32
 
 
-@njit(fastmath=True)  # ([float64(float64,float64),float32(float32,float32)])
+@njit(fastmath=True, cache=True)  # ([float64(float64,float64),float32(float32,float32)])
 def ForceKernel(r, h):
     """
     Returns the quantity equivalent to (fraction of mass enclosed)/ r^3 for a cubic-spline mass distribution of compact support radius h. Used to calculate the softened gravitational force.
@@ -25,7 +25,7 @@ def ForceKernel(r, h):
         )
 
 
-@njit(fastmath=True)  # ([float64(float64,float64)])
+@njit(fastmath=True, cache=True)  # ([float64(float64,float64)])
 def PotentialKernel(r, h):
     """
     Returns the equivalent of -1/r for a cubic-spline mass distribution of compact support radius h. Used to calculate the softened gravitational potential.

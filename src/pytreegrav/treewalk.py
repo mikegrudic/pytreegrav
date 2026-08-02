@@ -36,6 +36,7 @@ def angular_bin(dx):
 
 @njit(fastmath=True)
 def NearestImage(x, boxsize):
+    """Nearest periodic image of a 1D separation x in a box of side boxsize."""
     if abs(x) > boxsize / 2:
         return -copysign(boxsize - abs(x), x)
     else:
@@ -51,7 +52,7 @@ def PotentialWalk(pos, tree, softening=0, no=-1, theta=0.7):
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
     no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -93,7 +94,7 @@ def PotentialWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
     no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -139,7 +140,7 @@ def AccelWalk(pos, tree, softening=0, no=-1, theta=0.7):
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
     no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -190,7 +191,7 @@ def AccelWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):  # ,include_self_p
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
     no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -249,6 +250,8 @@ def PotentialTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, q
     Optional arguments:
     G -- gravitational constant (default 1.0)
     theta -- accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+    quadrupole -- if True, include node quadrupole moments in the multipole expansion;
+        requires a tree built with quadrupole=True (default False)
     Returns:
     shape (N,) array of potential values at each point in pos
     """
@@ -279,6 +282,8 @@ def AccelTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, quadr
     Optional arguments:
     G -- gravitational constant (default 1.0)
     theta -- accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
+    quadrupole -- if True, include node quadrupole moments in the multipole expansion;
+        requires a tree built with quadrupole=True (default False)
     Returns:
     shape (N,3) array of acceleration values at each point in pos_target
     """
@@ -304,6 +309,8 @@ AccelTarget_tree = njit(AccelTarget_tree, fastmath=True)
 
 @njit(fastmath=True)
 def do_weighted_binning(tree, no, rbins, mbin, r, r_idx, quantity):
+    """(experimental) Spread a node's contribution across the radial bins its extent overlaps,
+    weighted by the overlap fraction, instead of assigning it all to the bin containing r."""
     h = 0.5 * tree.Sizes[no]
     Nbins = rbins.shape[0] - 1
     if (r + h < rbins[r_idx + 1]) and (r - h > rbins[r_idx]):
@@ -345,16 +352,25 @@ def DensityCorrWalk(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance
+    """Total mass in each radial bin around ``pos``, by Barnes-Hut treewalk.
 
     Arguments:
     pos - (3,) array containing position of interest
     tree - octree object storing the tree structure
+    rbins - 1D array of radial bin edges; must be logarithmically spaced
 
     Keyword arguments:
-    softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at
+        most this factor times the radial bin width (default 100)
+    no - index of the top-level node to start the walk from; defaults to the global root, can be a
+        subnode in principle for e.g. parallelization
+    theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
+    boxsize - finite periodic box size, if periodic boundary conditions are to be used (default 0)
+    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted
+        kernel instead of assigning each node to a single bin (default False)
+
+    Returns:
+    shape (len(rbins)-1,) array of total mass in each radial bin
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -424,18 +440,23 @@ def DensityCorrFunc_tree(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Returns the average mass in radial bins surrounding a point
+    """Average mass in each radial bin around a point, averaged over all points.
 
     Arguments:
     pos -- shape (N,3) array of particle positions
-    tree -- Octree instance containing the positions, masses, and softenings of the source particles
+    tree -- Octree instance containing the positions, masses and softenings of the sources
+    rbins -- 1D array of radial bin edges; must be logarithmically spaced
 
     Optional arguments:
-    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins
-    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until
+        their side length is at most this factor * the radial bin width (default 100)
+    theta -- cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
+    boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
+    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted
+        kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    mbins -- arrays containing total mass in each bin
+    shape (len(rbins)-1,) array of mean mass per radial bin, averaged over all points
     """
     Nthreads = get_num_threads()
     mbin = zeros((Nthreads, rbins.shape[0] - 1))
@@ -473,17 +494,27 @@ def VelocityCorrWalk(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance
+    """Weight-summed velocity correlation in each radial bin around ``pos``, by Barnes-Hut treewalk.
 
     Arguments:
     pos - (3,) array containing position of interest
-    vel - (3,) array containing velocity of point of interest
+    vel - (3,) array containing velocity of the point of interest
     tree - octree object storing the tree structure
+    rbins - 1D array of radial bin edges; must be logarithmically spaced
 
     Keyword arguments:
-    softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at
+        most this factor times the radial bin width (default 100)
+    no - index of the top-level node to start the walk from; defaults to the global root, can be a
+        subnode in principle for e.g. parallelization
+    theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
+    boxsize - finite periodic box size, if periodic boundary conditions are to be used (default 0)
+    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted
+        kernel instead of assigning each node to a single bin (default False)
+
+    Returns:
+    (wtsums, binsums) - per-bin weight sums and weighted v.v' sums; the caller divides one by the
+    other to form the correlation function
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -562,18 +593,25 @@ def VelocityCorrFunc_tree(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Returns the average mass in radial bins surrounding a point
+    """Mass-weighted velocity correlation function <v.v'> in radial bins, averaged over all points.
 
     Arguments:
     pos -- shape (N,3) array of particle positions
-    tree -- Octree instance containing the positions, masses, and softenings of the source particles
+    vel -- shape (N,3) array of particle velocities
+    weight -- shape (N,) array of per-particle weights (e.g. masses)
+    tree -- DynamicOctree instance containing the source positions, weights and velocities
+    rbins -- 1D array of radial bin edges; must be logarithmically spaced
 
     Optional arguments:
-    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins
-    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until
+        their side length is at most this factor * the radial bin width (default 100)
+    theta -- cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
+    boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
+    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted
+        kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    mbins -- arrays containing total mass in each bin
+    shape (len(rbins)-1,) array of the weighted mean of v.v' in each radial bin
     """
     Nthreads = get_num_threads()
     mbin = zeros((Nthreads, rbins.shape[0] - 1))
@@ -614,17 +652,27 @@ def VelocityStructWalk(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Returns the gravitational potential at position x by performing the Barnes-Hut treewalk using the provided octree instance
+    """Weight-summed velocity structure function in each radial bin around ``pos``.
 
     Arguments:
     pos - (3,) array containing position of interest
-    vel - (3,) array containing velocity of point of interest
+    vel - (3,) array containing velocity of the point of interest
     tree - octree object storing the tree structure
+    rbins - 1D array of radial bin edges; must be logarithmically spaced
 
     Keyword arguments:
-    softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
-    theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~1% accuracy)
+    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at
+        most this factor times the radial bin width (default 100)
+    no - index of the top-level node to start the walk from; defaults to the global root, can be a
+        subnode in principle for e.g. parallelization
+    theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
+    boxsize - finite periodic box size, if periodic boundary conditions are to be used (default 0)
+    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted
+        kernel instead of assigning each node to a single bin (default False)
+
+    Returns:
+    (wtsums, binsums) - per-bin weight sums and weighted |v-v'|^2 sums; the caller divides one by
+    the other to form the structure function
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -703,18 +751,25 @@ def VelocityStructFunc_tree(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Returns the average mass in radial bins surrounding a point
+    """Mass-weighted velocity structure function <|v-v'|^2> in radial bins, averaged over all points.
 
     Arguments:
     pos -- shape (N,3) array of particle positions
-    tree -- Octree instance containing the positions, masses, and softenings of the source particles
+    vel -- shape (N,3) array of particle velocities
+    weight -- shape (N,) array of per-particle weights (e.g. masses)
+    tree -- DynamicOctree instance containing the source positions, weights and velocities
+    rbins -- 1D array of radial bin edges; must be logarithmically spaced
 
     Optional arguments:
-    rbins -- 1D array of radial bin edges - if None will use heuristics to determine sensible bins
-    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 0.5)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until
+        their side length is at most this factor * the radial bin width (default 100)
+    theta -- cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
+    boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
+    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted
+        kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    mbins -- arrays containing total mass in each bin
+    shape (len(rbins)-1,) array of the weighted mean of |v-v'|^2 in each radial bin
     """
 
     Nthreads = get_num_threads()
@@ -803,9 +858,7 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
 
         else:  # we have a node, need to check if it intersects a ray
             node_intersects_ray = False
-            R_eff = (
-                tree.Sizes[no] * 0.8660254037844386 + tree.Deltas[no]
-            )  # effective search radius from center of mass
+            R_eff = tree.Sizes[no] * 0.8660254037844386 + tree.Deltas[no]  # effective search radius from center of mass
             for i in range(N_rays):
                 if r < h + R_eff:  # if node contains the origin then it must intersect all rays
                     node_intersects_ray = True
@@ -966,6 +1019,8 @@ def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=
 
         Randomly orients the raygrid for each particle.
 
+    theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate
+        (default 0.7)
     """
     # scoped, not global -- see the note in PotentialTarget_tree
     with parallel_chunksize(10000):

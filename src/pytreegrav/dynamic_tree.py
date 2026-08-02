@@ -191,9 +191,9 @@ class DynamicOctree(object):
 
 
 @njit
-def ComputeMomentsDynamic(
-    tree, no, children
-):  # does a recursive pass through the tree and computes centers of mass, total mass, max softening, and distance between geometric center and COM
+def ComputeMomentsDynamic(tree, no, children):
+    """Recursive pass computing each node's center of mass, total mass, max softening, mean
+    velocity and the offset between geometric center and COM (the DynamicOctree variant)."""
     quad = zeros((3, 3))
     if no < tree.NumParticles:  # if this is a particle, just return the properties
         return (
@@ -230,6 +230,7 @@ def ComputeMomentsDynamic(
         if tree.HasQuads:
             for c in children[no]:
                 if c > -1:
+                    mi = tree.Masses[c]  # per-child mass: 'mi' from the loop above is the LAST child's
                     comi = tree.Coordinates[c]
                     quadi = tree.Quadrupoles[c]
                     ri = comi - com
@@ -258,6 +259,8 @@ def ComputeMomentsDynamic(
 
 @njit
 def SetupTreewalk(tree, no, children):
+    """As octree.SetupTreewalk, for the DynamicOctree: link FirstSubnode/NextBranch for
+    iterative traversal."""
     # print(no)
     if no < tree.NumParticles:
         return  # leaf nodes are handled from above

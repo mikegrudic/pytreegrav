@@ -349,9 +349,7 @@ class Octree:
                     cnode = new_node_idx
                     new_node_idx += 1
                     for k in range(3):
-                        self.Coordinates[cnode, k] = (
-                            self.Coordinates[node, k] + self.Sizes[node] * octant_offsets[d, k]
-                        )
+                        self.Coordinates[cnode, k] = self.Coordinates[node, k] + self.Sizes[node] * octant_offsets[d, k]
                     self.Sizes[cnode] = self.Sizes[node] * 0.5
                     children[node, d] = cnode
                     if top >= st_node.shape[0]:  # grow the stack if needed
@@ -492,6 +490,7 @@ def ComputeMoments(tree, no, children):
         if tree.HasQuads:
             for c in children[no]:
                 if c > -1:
+                    mi = tree.Masses[c]  # per-child mass: 'mi' from the loop above is the LAST child's
                     comi = tree.Coordinates[c]
                     quadi = tree.Quadrupoles[c]
                     ri = comi - com
@@ -518,6 +517,8 @@ def ComputeMoments(tree, no, children):
 
 @njit
 def SetupTreewalk(tree, no, children):
+    """Recursively link each node to its first subnode and its next sibling branch, so a walk
+    can traverse the tree iteratively (opening a node -> FirstSubnode, accepting -> NextBranch)."""
     if no < tree.NumParticles:
         return  # leaf nodes are handled from above
     last_node = -1

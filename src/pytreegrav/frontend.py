@@ -12,6 +12,7 @@ from .misc import *
 
 
 def valueTestMethod(method):
+    """Raise TypeError/ValueError unless method is one of 'adaptive', 'bruteforce', 'tree'."""
     methods = ["adaptive", "bruteforce", "tree"]
 
     ## check if method is a str
@@ -149,7 +150,7 @@ def Potential(
     softening: None or array_like, optional
         shape (N,) array containing kernel support radii for gravitational softening -  - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default
     theta: float, optional
-        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
+        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, giving ~0.2% RMS acceleration error on a Plummer sphere; 0.5 gives ~0.1%)
     parallel: bool, optional
         If True, will parallelize the force summation over all available cores. (default False)
     tree: Octree, optional
@@ -267,7 +268,7 @@ def PotentialTarget(
     G: float, optional
         gravitational constant (default 1.0)
     theta: float, optional
-        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
+        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, giving ~0.2% RMS acceleration error on a Plummer sphere; 0.5 gives ~0.1%)
     parallel: bool, optional
         If True, will parallelize the force summation over all available cores. (default False)
     tree: Octree, optional
@@ -389,7 +390,7 @@ def Accel(
     softening: None or array_like, optional
         shape (N,) array containing kernel support radii for gravitational softening - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default
     theta: float, optional
-        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
+        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, giving ~0.2% RMS acceleration error on a Plummer sphere; 0.5 gives ~0.1%)
     parallel: bool, optional
         If True, will parallelize the force summation over all available cores. (default False)
     tree: Octree, optional
@@ -506,7 +507,7 @@ def AccelTarget(
     G: float, optional
         gravitational constant (default 1.0)
     theta: float, optional
-        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, gives ~1% accuracy)
+        cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, giving ~0.2% RMS acceleration error on a Plummer sphere; 0.5 gives ~0.1%)
     parallel: bool, optional
         If True, will parallelize the force summation over all available cores. (default False)
     tree: Octree, optional
