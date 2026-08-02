@@ -2,7 +2,7 @@
 
 import numpy as np
 from numpy import zeros, ones, concatenate
-from numba import float64, boolean, int64, njit
+from numba import float64, boolean, int64, njit, prange, get_num_threads
 from numba.experimental import jitclass
 
 spec = [
@@ -370,6 +370,258 @@ def ComputeMomentsLinked(tree, no):
     return hmax, m, quad, com
 
 
+# ---------------------------------------------------------------------------------------------
+# Parallel split
+#
+# The node split is the largest single phase of the build, and it is naturally divide-and-conquer:
+# once the top of the tree is laid out, each sub-octant owns a disjoint, contiguous range of the
+# Morton-sorted particles and can be built without looking at any other. What stops a naive prange
+# is node-index allocation -- the serial split hands out indices from one running counter.
+#
+# So: descend serially to a frontier of subtrees, count each subtree's nodes exactly (a parallel
+# pass that mirrors the split with every store removed), prefix-sum those counts into disjoint
+# contiguous blocks, and let each worker build into its own block. Contiguous blocks also keep a
+# worker's node writes in its own region instead of interleaving with everyone else's.
+#
+# Groups that exhaust the Morton key are deferred rather than built: resolving them means
+# RekeySlice, which permutes particle data and whose node count cannot be known without doing the
+# work, so they cannot be budgeted for. They are finished by the ordinary serial loop afterwards.
+# ---------------------------------------------------------------------------------------------
+
+# Below this N the frontier descent and counting pass cost more than the split they save. Measured
+# on 16 threads (Plummer), serial -> parallel build: 0.27x at N=2e3, 0.70x at 1e4, 1.06x at 2e4,
+# 1.21x at 3e4, 1.39x at 5e4, 1.58x at 1e5. Break-even is ~2e4; 3e4 keeps a clear margin.
+PARALLEL_SPLIT_NMIN = 30_000
+# Frontier subtrees per thread. More gives better load balance, but the descent that produces them
+# is serial, so pushing it too fine just moves the time rather than removing it. Flat between 32
+# and 512 at N=1e7 (697/704/709 ms on 16 threads); 8 is measurably worse at 727 ms.
+FRONTIER_PER_THREAD = 32
+
+
+@njit(cache=True)
+def _count_subtree(keys, lo, hi, shift):
+    """Return (nodes, deferrals) for the subtree the split would build under [lo, hi).
+
+    Mirrors the split exactly with every store removed, so the two agree by construction -- which
+    is what makes it safe to hand each worker a private, exactly-sized block of node indices. The
+    partition depends only on the Morton digits, never on coordinates, which is why counting can
+    skip all the geometry.
+
+    A group whose key is exhausted (shift < 0) is counted as one deferral and not descended into.
+    """
+    cap = 64
+    st_lo = np.empty(cap, dtype=np.int64)
+    st_hi = np.empty(cap, dtype=np.int64)
+    st_shift = np.empty(cap, dtype=np.int64)
+    st_lo[0], st_hi[0], st_shift[0] = lo, hi, shift
+    top = 1
+    n = 0
+    ndef = 0
+    bs = np.empty(8, dtype=np.int64)
+    be = np.empty(8, dtype=np.int64)
+    bd = np.empty(8, dtype=np.int64)
+
+    while top > 0:
+        top -= 1
+        lo = st_lo[top]
+        hi = st_hi[top]
+        shift = st_shift[top]
+        if shift < 0:
+            ndef += 1
+            continue
+        nb = _octant_runs(keys, lo, hi, shift, bs, be, bd)
+        for b in range(nb):
+            i = bs[b]
+            j = be[b]
+            if j - i > 1:
+                n += 1
+                if top >= st_lo.shape[0]:
+                    add = st_lo.shape[0]
+                    st_lo = concatenate((st_lo, np.empty(add, dtype=np.int64)))
+                    st_hi = concatenate((st_hi, np.empty(add, dtype=np.int64)))
+                    st_shift = concatenate((st_shift, np.empty(add, dtype=np.int64)))
+                st_lo[top], st_hi[top], st_shift[top] = i, j, shift - 3
+                top += 1
+    return n, ndef
+
+
+@njit(parallel=True, cache=True)
+def _count_frontier(keys, nf, f_lo, f_hi, f_shift, counts, ndefs):
+    """Exact per-subtree node and deferral counts, computed concurrently."""
+    for t in prange(nf):
+        counts[t], ndefs[t] = _count_subtree(keys, f_lo[t], f_hi[t], f_shift[t])
+
+
+@njit(cache=True)
+def _split_subtree(
+    keys,
+    node,
+    lo,
+    hi,
+    shift,
+    rnd,
+    next_idx,
+    npart,
+    Coord,
+    Sizes,
+    First,
+    Next,
+    Mass,
+    Soft,
+    Acc,
+    Parent,
+    PPar,
+    has_quads,
+    d_node,
+    d_lo,
+    d_hi,
+    d_rnd,
+    d_at,
+):
+    """Build the subtree under `node`, taking node indices from `next_idx`.
+
+    Identical to the body of the serial split loop, but writing into a caller-owned index block
+    and recording key-exhausted groups into a caller-owned deferral slice instead of re-keying
+    them. Everything it touches -- the particle range [lo, hi), the node block, the deferral
+    slots -- belongs to this call alone, which is what makes concurrent calls safe.
+
+    Returns (next free node index, number of deferrals recorded).
+    """
+    cap = 64
+    st_node = np.empty(cap, dtype=np.int64)
+    st_lo = np.empty(cap, dtype=np.int64)
+    st_hi = np.empty(cap, dtype=np.int64)
+    st_shift = np.empty(cap, dtype=np.int64)
+    st_round = np.empty(cap, dtype=np.int64)
+    st_node[0], st_lo[0], st_hi[0], st_shift[0], st_round[0] = node, lo, hi, shift, rnd
+    top = 1
+    nd = 0
+    bs = np.empty(8, dtype=np.int64)
+    be = np.empty(8, dtype=np.int64)
+    bd = np.empty(8, dtype=np.int64)
+
+    while top > 0:
+        top -= 1
+        node = st_node[top]
+        lo = st_lo[top]
+        hi = st_hi[top]
+        shift = st_shift[top]
+        rnd = st_round[top]
+
+        if shift < 0:
+            # hand back to the serial pass: re-keying permutes particle data and its node count
+            # cannot be budgeted for ahead of time
+            d_node[d_at + nd] = node
+            d_lo[d_at + nd] = lo
+            d_hi[d_at + nd] = hi
+            d_rnd[d_at + nd] = rnd
+            nd += 1
+            continue
+
+        last_child = -1
+        nb = _octant_runs(keys, lo, hi, shift, bs, be, bd)
+        for b in range(nb):
+            i = bs[b]
+            j = be[b]
+            d = bd[b]
+            if j - i == 1:
+                c = i
+                mi = Mass[i]
+                Mass[node] += mi
+                an = node - npart
+                for k in range(3):
+                    Acc[an, k] += mi * Coord[i, k]
+                Soft[node] = max(Soft[node], Soft[i])
+                if has_quads:
+                    PPar[i] = node
+            else:
+                cnode = next_idx
+                next_idx += 1
+                for k in range(3):
+                    Coord[cnode, k] = Coord[node, k] + Sizes[node] * octant_offsets[d, k]
+                Sizes[cnode] = Sizes[node] * 0.5
+                Mass[cnode] = 0.0
+                Soft[cnode] = 0.0
+                Parent[cnode - npart] = node
+                c = cnode
+                if top >= st_node.shape[0]:
+                    add = st_node.shape[0]
+                    st_node = concatenate((st_node, np.empty(add, dtype=np.int64)))
+                    st_lo = concatenate((st_lo, np.empty(add, dtype=np.int64)))
+                    st_hi = concatenate((st_hi, np.empty(add, dtype=np.int64)))
+                    st_shift = concatenate((st_shift, np.empty(add, dtype=np.int64)))
+                    st_round = concatenate((st_round, np.empty(add, dtype=np.int64)))
+                st_node[top], st_lo[top], st_hi[top] = cnode, i, j
+                st_shift[top], st_round[top] = shift - 3, rnd
+                top += 1
+            if last_child < 0:
+                First[node] = c
+            else:
+                Next[last_child] = c
+            last_child = c
+        if last_child >= 0:
+            Next[last_child] = Next[node]
+    return next_idx, nd
+
+
+@njit(parallel=True, cache=True)
+def _split_frontier(
+    keys,
+    nf,
+    f_node,
+    f_lo,
+    f_hi,
+    f_shift,
+    f_rnd,
+    offsets,
+    d_offsets,
+    npart,
+    Coord,
+    Sizes,
+    First,
+    Next,
+    Mass,
+    Soft,
+    Acc,
+    Parent,
+    PPar,
+    has_quads,
+    d_node,
+    d_lo,
+    d_hi,
+    d_rnd,
+    d_used,
+):
+    """Build every frontier subtree concurrently, each into its own node-index block."""
+    for t in prange(nf):
+        _, nd = _split_subtree(
+            keys,
+            f_node[t],
+            f_lo[t],
+            f_hi[t],
+            f_shift[t],
+            f_rnd[t],
+            offsets[t],
+            npart,
+            Coord,
+            Sizes,
+            First,
+            Next,
+            Mass,
+            Soft,
+            Acc,
+            Parent,
+            PPar,
+            has_quads,
+            d_node,
+            d_lo,
+            d_hi,
+            d_rnd,
+            d_offsets[t],
+        )
+        d_used[t] = nd
+
+
 @jitclass(spec)
 class Octree:
     """Octree implementation."""
@@ -609,86 +861,196 @@ class Octree:
         st_round[0] = 0
         top = 1
 
-        while top > 0:
-            top -= 1
-            node = st_node[top]
-            lo = st_lo[top]
-            hi = st_hi[top]
-            shift = st_shift[top]
-            rnd = st_round[top]
+        # Frontier for the parallel split: subtrees small enough to be independent work units.
+        # The descent below stops at them, the parallel pass builds them, and whatever it defers
+        # comes back onto this same stack afterwards.
+        want = FRONTIER_PER_THREAD * get_num_threads()
+        parallel_split = N >= PARALLEL_SPLIT_NMIN and want > 1
+        min_work = N // want if parallel_split else 0
+        fcap = 4 * want + 64
+        f_node = np.empty(fcap, dtype=np.int64)
+        f_lo = np.empty(fcap, dtype=np.int64)
+        f_hi = np.empty(fcap, dtype=np.int64)
+        f_shift = np.empty(fcap, dtype=np.int64)
+        f_rnd = np.empty(fcap, dtype=np.int64)
+        nf = 0
 
-            if shift < 0:
-                # We have exhausted the current key's bits but >1 point remains in this cell.
-                if rnd >= MORTON_MAX_ROUNDS:
-                    # points are coincident to floating-point precision: park them in a bucket.
-                    # Reserve its worst case (one node per 7 particles) up front so BuildBucket
-                    # cannot reallocate behind acc/parent's back.
-                    while new_node_idx + (hi - lo) // 7 + 2 > self.NumNodes:
-                        size_increase = increase_tree_size(self)
-                    if acc.shape[0] < self.NumNodes - self.NumParticles:
-                        acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
-                    new_node_idx = self.BuildBucket(node, lo, hi, new_node_idx, acc, parent, pparent)
-                    continue
-                # re-key this group relative to the node's (sub-)cell and re-sort the slice
-                self.RekeySlice(keys_sorted, node, lo, hi)
-                shift = 3 * (MORTON_BITS - 1)
-                rnd += 1
+        # Two passes. The first descends to the frontier and stops; the parallel split then
+        # runs and hands back whatever it could not budget for, which the second pass finishes
+        # on the ordinary serial path. Sharing one loop body keeps re-keying and bucketing in
+        # exactly one place.
+        for _phase in range(2):
+            while top > 0:
+                top -= 1
+                node = st_node[top]
+                lo = st_lo[top]
+                hi = st_hi[top]
+                shift = st_shift[top]
+                rnd = st_round[top]
 
-            # partition [lo, hi) by the 3-bit digit at the current shift (contiguous, since sorted)
-            # Children are discovered in increasing digit order, which IS sibling order, so the
-            # FirstSubnode/NextBranch links can be written here directly -- no `children` array
-            # and no SetupTreewalk pass. NextBranch[node] is already set by node's own parent
-            # (the split is top-down), and the root's is -1 from Initialize.
-            last_child = -1
-            nb = _octant_runs(keys_sorted, lo, hi, shift, bs, be, bd)
-            for b in range(nb):
-                i = bs[b]
-                j = be[b]
-                d = bd[b]
-                if j - i == 1:  # single particle -> becomes a leaf child directly
-                    c = i
-                    # fold the particle into its parent's moments while we are standing on it
-                    mi = self.Masses[i]
-                    self.Masses[node] += mi
-                    an = node - self.NumParticles
-                    for k in range(3):
-                        acc[an, k] += mi * self.Coordinates[i, k]
-                    self.Softenings[node] = max(self.Softenings[node], self.Softenings[i])
-                    if self.HasQuads:
-                        pparent[i] = node  # the quadrupole shift needs this node's COM later
-                else:  # >1 particle in this octant -> create a child node and recurse
-                    while new_node_idx + 1 > self.NumNodes:
-                        size_increase = increase_tree_size(self)
-                    if acc.shape[0] < self.NumNodes - self.NumParticles:
-                        acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
-                    cnode = new_node_idx
-                    new_node_idx += 1
-                    for k in range(3):
-                        self.Coordinates[cnode, k] = self.Coordinates[node, k] + self.Sizes[node] * octant_offsets[d, k]
-                    self.Sizes[cnode] = self.Sizes[node] * 0.5
-                    parent[cnode - self.NumParticles] = node
-                    c = cnode
-                    if top >= st_node.shape[0]:  # grow the stack if needed
-                        add = st_node.shape[0]
-                        st_node = concatenate((st_node, np.empty(add, dtype=np.int64)))
-                        st_lo = concatenate((st_lo, np.empty(add, dtype=np.int64)))
-                        st_hi = concatenate((st_hi, np.empty(add, dtype=np.int64)))
-                        st_shift = concatenate((st_shift, np.empty(add, dtype=np.int64)))
-                        st_round = concatenate((st_round, np.empty(add, dtype=np.int64)))
-                    st_node[top] = cnode
-                    st_lo[top] = i
-                    st_hi[top] = j
-                    st_shift[top] = shift - 3
-                    st_round[top] = rnd
-                    top += 1
-                if last_child < 0:
-                    self.FirstSubnode[node] = c
-                else:
-                    self.NextBranch[last_child] = c
-                last_child = c
-            if last_child >= 0:
-                self.NextBranch[last_child] = self.NextBranch[node]
+                if shift < 0:
+                    # We have exhausted the current key's bits but >1 point remains in this cell.
+                    if rnd >= MORTON_MAX_ROUNDS:
+                        # points are coincident to floating-point precision: park them in a bucket.
+                        # Reserve its worst case (one node per 7 particles) up front so BuildBucket
+                        # cannot reallocate behind acc/parent's back.
+                        while new_node_idx + (hi - lo) // 7 + 2 > self.NumNodes:
+                            size_increase = increase_tree_size(self)
+                        if acc.shape[0] < self.NumNodes - self.NumParticles:
+                            acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
+                        new_node_idx = self.BuildBucket(node, lo, hi, new_node_idx, acc, parent, pparent)
+                        continue
+                    # re-key this group relative to the node's (sub-)cell and re-sort the slice
+                    self.RekeySlice(keys_sorted, node, lo, hi)
+                    shift = 3 * (MORTON_BITS - 1)
+                    rnd += 1
 
+                # partition [lo, hi) by the 3-bit digit at the current shift (contiguous, since sorted)
+                # Children are discovered in increasing digit order, which IS sibling order, so the
+                # FirstSubnode/NextBranch links can be written here directly -- no `children` array
+                # and no SetupTreewalk pass. NextBranch[node] is already set by node's own parent
+                # (the split is top-down), and the root's is -1 from Initialize.
+                last_child = -1
+                nb = _octant_runs(keys_sorted, lo, hi, shift, bs, be, bd)
+                for b in range(nb):
+                    i = bs[b]
+                    j = be[b]
+                    d = bd[b]
+                    if j - i == 1:  # single particle -> becomes a leaf child directly
+                        c = i
+                        # fold the particle into its parent's moments while we are standing on it
+                        mi = self.Masses[i]
+                        self.Masses[node] += mi
+                        an = node - self.NumParticles
+                        for k in range(3):
+                            acc[an, k] += mi * self.Coordinates[i, k]
+                        self.Softenings[node] = max(self.Softenings[node], self.Softenings[i])
+                        if self.HasQuads:
+                            pparent[i] = node  # the quadrupole shift needs this node's COM later
+                    else:  # >1 particle in this octant -> create a child node and recurse
+                        while new_node_idx + 1 > self.NumNodes:
+                            size_increase = increase_tree_size(self)
+                        if acc.shape[0] < self.NumNodes - self.NumParticles:
+                            acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
+                        cnode = new_node_idx
+                        new_node_idx += 1
+                        for k in range(3):
+                            self.Coordinates[cnode, k] = (
+                                self.Coordinates[node, k] + self.Sizes[node] * octant_offsets[d, k]
+                            )
+                        self.Sizes[cnode] = self.Sizes[node] * 0.5
+                        parent[cnode - self.NumParticles] = node
+                        c = cnode
+                        if min_work > 0 and j - i <= min_work and nf < fcap:
+                            # small enough to hand to a worker; do not descend into it here
+                            f_node[nf] = cnode
+                            f_lo[nf] = i
+                            f_hi[nf] = j
+                            f_shift[nf] = shift - 3
+                            f_rnd[nf] = rnd
+                            nf += 1
+                        else:
+                            if top >= st_node.shape[0]:  # grow the stack if needed
+                                add = st_node.shape[0]
+                                st_node = concatenate((st_node, np.empty(add, dtype=np.int64)))
+                                st_lo = concatenate((st_lo, np.empty(add, dtype=np.int64)))
+                                st_hi = concatenate((st_hi, np.empty(add, dtype=np.int64)))
+                                st_shift = concatenate((st_shift, np.empty(add, dtype=np.int64)))
+                                st_round = concatenate((st_round, np.empty(add, dtype=np.int64)))
+                            st_node[top] = cnode
+                            st_lo[top] = i
+                            st_hi[top] = j
+                            st_shift[top] = shift - 3
+                            st_round[top] = rnd
+                            top += 1
+                    if last_child < 0:
+                        self.FirstSubnode[node] = c
+                    else:
+                        self.NextBranch[last_child] = c
+                    last_child = c
+                if last_child >= 0:
+                    self.NextBranch[last_child] = self.NextBranch[node]
+
+            if nf > 0:
+                # exact node count per subtree, then a prefix sum gives each worker a private block
+                counts = np.empty(nf, dtype=np.int64)
+                ndefs = np.empty(nf, dtype=np.int64)
+                _count_frontier(keys_sorted, nf, f_lo, f_hi, f_shift, counts, ndefs)
+
+                offsets = np.empty(nf, dtype=np.int64)
+                d_offsets = np.empty(nf, dtype=np.int64)
+                run = new_node_idx
+                drun = 0
+                for t in range(nf):
+                    offsets[t] = run
+                    run += counts[t]
+                    d_offsets[t] = drun
+                    drun += ndefs[t]
+
+                # size everything up front: workers must never reallocate underneath each other
+                while run > self.NumNodes:
+                    size_increase = increase_tree_size(self)
+                if acc.shape[0] < self.NumNodes - self.NumParticles:
+                    acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
+
+                d_node = np.empty(drun + 1, dtype=np.int64)
+                d_lo = np.empty(drun + 1, dtype=np.int64)
+                d_hi = np.empty(drun + 1, dtype=np.int64)
+                d_rnd = np.empty(drun + 1, dtype=np.int64)
+                d_used = np.zeros(nf, dtype=np.int64)
+
+                _split_frontier(
+                    keys_sorted,
+                    nf,
+                    f_node,
+                    f_lo,
+                    f_hi,
+                    f_shift,
+                    f_rnd,
+                    offsets,
+                    d_offsets,
+                    self.NumParticles,
+                    self.Coordinates,
+                    self.Sizes,
+                    self.FirstSubnode,
+                    self.NextBranch,
+                    self.Masses,
+                    self.Softenings,
+                    acc,
+                    parent,
+                    pparent,
+                    self.HasQuads,
+                    d_node,
+                    d_lo,
+                    d_hi,
+                    d_rnd,
+                    d_used,
+                )
+                new_node_idx = run
+
+                # Finish the key-exhausted groups on the ordinary serial path. Re-entering the loop
+                # above is deliberate: it already knows how to re-key and bucket, and these are rare.
+                for t in range(nf):
+                    for q in range(d_used[t]):
+                        e = d_offsets[t] + q
+                        if top >= st_node.shape[0]:
+                            add = st_node.shape[0]
+                            st_node = concatenate((st_node, np.empty(add, dtype=np.int64)))
+                            st_lo = concatenate((st_lo, np.empty(add, dtype=np.int64)))
+                            st_hi = concatenate((st_hi, np.empty(add, dtype=np.int64)))
+                            st_shift = concatenate((st_shift, np.empty(add, dtype=np.int64)))
+                            st_round = concatenate((st_round, np.empty(add, dtype=np.int64)))
+                        st_node[top] = d_node[e]
+                        st_lo[top] = d_lo[e]
+                        st_hi[top] = d_hi[e]
+                        st_shift[top] = -3  # exhausted, so the loop re-keys or buckets
+                        st_round[top] = d_rnd[e]
+                        top += 1
+
+            if _phase == 1 or nf == 0:
+                break
+            nf = 0
+            min_work = 0  # everything left is finished serially by the second pass
         return new_node_idx, acc, parent, pparent
 
     def RekeySlice(self, keys_sorted, node, lo, hi):
