@@ -133,6 +133,116 @@ def _radix_argsort(keys):
     return idx
 
 
+# Above this range size the split locates octant boundaries by binary search instead of by
+# scanning. Linear costs O(hi-lo) per node, i.e. ~N per tree level; binary costs 8*log2(hi-lo),
+# far cheaper near the root and far more expensive near the leaves, so the split uses whichever
+# suits the range in front of it. Both produce identical boundaries.
+BSEARCH_MIN = 512
+
+
+@njit
+def _grow_moment_arrays(acc, parent, n):
+    """Re-allocate the moment accumulators to n node slots, preserving contents.
+
+    Called whenever increase_tree_size grows the tree underneath them; kept as a free function
+    because increase_tree_size only knows about the jitclass, not these build-local arrays.
+    """
+    acc_new = zeros((n, 3))
+    acc_new[: acc.shape[0]] = acc
+    parent_new = -ones(n, dtype=np.int64)
+    parent_new[: parent.shape[0]] = parent
+    return acc_new, parent_new
+
+
+@njit(inline="always")
+def _digit_upper_bound(keys, lo, hi, shift, d):
+    """First index in [lo, hi) whose Morton digit at `shift` exceeds d.
+
+    Valid because every bit above `shift` is equal across a node's range, so within that range
+    sorted keys imply a non-decreasing digit at `shift`.
+    """
+    while lo < hi:
+        mid = (lo + hi) >> 1
+        if ((keys[mid] >> shift) & 7) <= d:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+@njit(inline="always")
+def _octant_runs(keys, lo, hi, shift, bs, be, bd):
+    """Split [lo, hi) into its per-octant contiguous runs; returns the number of runs found.
+
+    Fills bs/be/bd (each length 8) with the start, end and octant digit of each run. Since the
+    keys are Morton-sorted, each octant's members are already contiguous.
+    """
+    nb = 0
+    start = lo
+    if hi - lo > BSEARCH_MIN:
+        for d in range(8):
+            if start >= hi:
+                break
+            end = _digit_upper_bound(keys, start, hi, shift, d)
+            if end > start:
+                bs[nb], be[nb], bd[nb] = start, end, d
+                nb += 1
+                start = end
+    else:
+        while start < hi:
+            d = (keys[start] >> shift) & 7
+            end = start + 1
+            while end < hi and ((keys[end] >> shift) & 7) == d:
+                end += 1
+            bs[nb], be[nb], bd[nb] = start, end, d
+            nb += 1
+            start = end
+    return nb
+
+
+@njit
+def RollupMoments(tree, acc, parent, node_hi):
+    """Bottom-up moments as a reverse linear scan, replacing the ComputeMoments traversal.
+
+    The split allocates node indices in DFS discovery order, so every descendant of a node has a
+    higher index than the node itself. Walking indices downward therefore reaches every child
+    before its parent with no links dereferenced -- the traversal that made ComputeMomentsLinked
+    DRAM-latency bound disappears, leaving one sequential pass with a single scattered write per
+    node.
+
+    Particle contributions are already folded in by the split, which sees each particle leaf
+    while it is standing on the parent node. This pass only rolls nodes into their parents.
+
+    `acc` holds the running sum of mass * position, indexed by (node - NumParticles), kept apart
+    from Coordinates because Coordinates still holds each node's geometric centre -- needed both
+    by the split, to place children, and here, to get Deltas. Reading that centre and replacing
+    it with the centre of mass in the same step is safe: the split is finished with it.
+
+    Monopole only; callers with HasQuads use ComputeMomentsLinked instead.
+    """
+    npart = tree.NumParticles
+    for node in range(node_hi - 1, npart - 1, -1):
+        a = node - npart
+        m = tree.Masses[node]
+        if m == 0.0:
+            continue  # empty node (a degenerate cell the split created but never filled)
+        inv = 1.0 / m
+        d2 = 0.0
+        p = parent[a]
+        for k in range(3):
+            com = acc[a, k] * inv
+            dx = com - tree.Coordinates[node, k]
+            d2 += dx * dx
+            tree.Coordinates[node, k] = com
+        tree.Deltas[node] = np.sqrt(d2)
+        if p >= npart:  # the root has no parent
+            pa = p - npart
+            for k in range(3):
+                acc[pa, k] += acc[a, k]
+            tree.Masses[p] += m
+            tree.Softenings[p] = max(tree.Softenings[p], tree.Softenings[node])
+
+
 @njit
 def ComputeMomentsLinked(tree, no):
     """ComputeMoments without a `children` array: iterate children via FirstSubnode/NextBranch.
@@ -206,11 +316,14 @@ class Octree:
 
         radix_path = radix and morton_order
         children = -ones((1, 8), dtype=np.int64)  # unused on the radix path; typing placeholder
+        acc = zeros((1, 3))  # typing placeholders, replaced on the radix path
+        parent = -ones(1, dtype=np.int64)
+        node_hi = 0
         if radix_path:
             # Radix-sort build: a single linear pass over Morton-sorted points produces the tree
             # already in Morton order, and links FirstSubnode/NextBranch as it goes -- so there is
             # no `children` table (0.96 GB at N=1e7, two-thirds of it unused) and no SetupTreewalk.
-            self.BuildTreeRadix(points, masses, softening)
+            node_hi, acc, parent = self.BuildTreeRadix(points, masses, softening)
         else:
             # Legacy insertion build (used for radix=False or morton_order=False).
             # first provisional treebuild to get the ordering right
@@ -231,7 +344,13 @@ class Octree:
 
         if compute_moments:
             # compute centers of mass, etc.
-            if radix_path:
+            if radix_path and not quadrupole:
+                # The split already folded in every particle, so this is a reverse linear scan
+                # rather than a tree traversal. Quadrupoles need a second bottom-up pass (the
+                # parallel-axis shift needs the parent's COM, unknown until the first finishes),
+                # so they keep the traversal.
+                RollupMoments(self, acc, parent, node_hi)
+            elif radix_path:
                 ComputeMomentsLinked(self, self.NumParticles)
             else:
                 ComputeMoments(self, self.NumParticles, children)
@@ -321,7 +440,13 @@ class Octree:
         level.  Because the sort already yields the depth-first (Morton) ordering, the particles are
         stored in that order and TreewalkIndices records the permutation - no second build is needed.
 
-        Returns the (NumNodes, 8) child-index array, exactly as BuildTree does.
+        Also seeds the moments as it goes: whenever the split emits a single-particle child it is
+        already standing on the parent node, so that particle's mass, mass-weighted position and
+        softening are folded straight in, and `parent` records each node's parent. RollupMoments
+        then finishes the job with one reverse scan instead of a tree traversal.
+
+        Returns (new_node_idx, acc, parent), where acc holds the running sum of mass * position
+        for each node and both arrays are indexed by (node - NumParticles).
         """
         N = points.shape[0]
 
@@ -360,6 +485,15 @@ class Octree:
 
         new_node_idx = self.NumParticles + 1
 
+        # Moment accumulators, sized for nodes only (particles need none) and so indexed by
+        # node - NumParticles. They have to grow in step with increase_tree_size below.
+        nnode = self.NumNodes - self.NumParticles
+        acc = zeros((nnode, 3))
+        parent = -ones(nnode, dtype=np.int64)
+        bs = np.empty(8, dtype=np.int64)  # scratch for the per-octant run boundaries
+        be = np.empty(8, dtype=np.int64)
+        bd = np.empty(8, dtype=np.int64)
+
         # explicit stack of node ranges still to be partitioned: (node, lo, hi, shift, round)
         # shift is the bit position of the current 3-bit Morton digit; round counts re-keyings.
         cap = 64
@@ -387,8 +521,14 @@ class Octree:
             if shift < 0:
                 # We have exhausted the current key's bits but >1 point remains in this cell.
                 if rnd >= MORTON_MAX_ROUNDS:
-                    # points are coincident to floating-point precision: park them in a bucket
-                    new_node_idx = self.BuildBucket(node, lo, hi, new_node_idx)
+                    # points are coincident to floating-point precision: park them in a bucket.
+                    # Reserve its worst case (one node per 7 particles) up front so BuildBucket
+                    # cannot reallocate behind acc/parent's back.
+                    while new_node_idx + (hi - lo) // 7 + 2 > self.NumNodes:
+                        size_increase = increase_tree_size(self)
+                    if acc.shape[0] < self.NumNodes - self.NumParticles:
+                        acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
+                    new_node_idx = self.BuildBucket(node, lo, hi, new_node_idx, acc, parent)
                     continue
                 # re-key this group relative to the node's (sub-)cell and re-sort the slice
                 self.RekeySlice(keys_sorted, node, lo, hi)
@@ -401,22 +541,31 @@ class Octree:
             # and no SetupTreewalk pass. NextBranch[node] is already set by node's own parent
             # (the split is top-down), and the root's is -1 from Initialize.
             last_child = -1
-            i = lo
-            while i < hi:
-                d = (keys_sorted[i] >> shift) & 7
-                j = i + 1
-                while j < hi and ((keys_sorted[j] >> shift) & 7) == d:
-                    j += 1
+            nb = _octant_runs(keys_sorted, lo, hi, shift, bs, be, bd)
+            for b in range(nb):
+                i = bs[b]
+                j = be[b]
+                d = bd[b]
                 if j - i == 1:  # single particle -> becomes a leaf child directly
                     c = i
+                    # fold the particle into its parent's moments while we are standing on it
+                    mi = self.Masses[i]
+                    self.Masses[node] += mi
+                    an = node - self.NumParticles
+                    for k in range(3):
+                        acc[an, k] += mi * self.Coordinates[i, k]
+                    self.Softenings[node] = max(self.Softenings[node], self.Softenings[i])
                 else:  # >1 particle in this octant -> create a child node and recurse
                     while new_node_idx + 1 > self.NumNodes:
                         size_increase = increase_tree_size(self)
+                    if acc.shape[0] < self.NumNodes - self.NumParticles:
+                        acc, parent = _grow_moment_arrays(acc, parent, self.NumNodes - self.NumParticles)
                     cnode = new_node_idx
                     new_node_idx += 1
                     for k in range(3):
                         self.Coordinates[cnode, k] = self.Coordinates[node, k] + self.Sizes[node] * octant_offsets[d, k]
                     self.Sizes[cnode] = self.Sizes[node] * 0.5
+                    parent[cnode - self.NumParticles] = node
                     c = cnode
                     if top >= st_node.shape[0]:  # grow the stack if needed
                         add = st_node.shape[0]
@@ -436,11 +585,10 @@ class Octree:
                 else:
                     self.NextBranch[last_child] = c
                 last_child = c
-                i = j
             if last_child >= 0:
                 self.NextBranch[last_child] = self.NextBranch[node]
 
-        return new_node_idx
+        return new_node_idx, acc, parent
 
     def RekeySlice(self, keys_sorted, node, lo, hi):
         """Recompute Morton keys for particles [lo, hi) relative to node's cell and re-sort them.
@@ -480,12 +628,15 @@ class Octree:
             self.TreewalkIndices[lo + a] = new_idx[a]
             keys_sorted[lo + a] = new_keys[a]
 
-    def BuildBucket(self, node, lo, hi, new_node_idx):
+    def BuildBucket(self, node, lo, hi, new_node_idx, acc, parent):
         """Attach particles [lo, hi), coincident to float precision, as a chain of nodes under node.
 
         Each node holds up to 8 particle children; when more remain, the 8th slot links to a
         further node. Links FirstSubnode/NextBranch directly, as the digit loop does. Geometry is
         degenerate (the points coincide) but valid, and no particle is dropped.
+
+        Seeds moments the same way the digit loop does. The caller must have reserved enough node
+        slots for the whole chain, since growing the tree here would leave acc/parent behind.
         """
         count = hi - lo
         cur = node
@@ -494,13 +645,12 @@ class Octree:
         for jj in range(count):
             remaining = count - 1 - jj
             if slot == 7 and remaining > 0:
-                while new_node_idx + 1 > self.NumNodes:
-                    size_increase = increase_tree_size(self)
                 nn = new_node_idx
                 new_node_idx += 1
                 for k in range(3):
                     self.Coordinates[nn, k] = self.Coordinates[cur, k] + self.Sizes[cur] * octant_offsets[7, k]
                 self.Sizes[nn] = self.Sizes[cur] * 0.5
+                parent[nn - self.NumParticles] = cur
                 # nn is the last child of cur; then we continue underneath nn
                 if last < 0:
                     self.FirstSubnode[cur] = nn
@@ -511,6 +661,12 @@ class Octree:
                 slot = 0
                 last = -1
             c = lo + jj
+            mi = self.Masses[c]
+            self.Masses[cur] += mi
+            ac = cur - self.NumParticles
+            for k in range(3):
+                acc[ac, k] += mi * self.Coordinates[c, k]
+            self.Softenings[cur] = max(self.Softenings[cur], self.Softenings[c])
             if last < 0:
                 self.FirstSubnode[cur] = c
             else:

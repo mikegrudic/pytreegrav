@@ -197,7 +197,8 @@ def Potential(
 
     # figure out which method to use
     if method == "adaptive":
-        if len(pos) > 1000:
+        # brute force stays competitive to larger N when it's threaded
+        if len(pos) > (8000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"
@@ -439,7 +440,8 @@ def Accel(
 
     # figure out which method to use
     if method == "adaptive":
-        if len(pos) > 1000:
+        # brute force stays competitive to larger N when it's threaded
+        if len(pos) > (8000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"
