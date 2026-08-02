@@ -250,8 +250,7 @@ def PotentialTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, q
     Optional arguments:
     G -- gravitational constant (default 1.0)
     theta -- accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
-    quadrupole -- if True, include node quadrupole moments in the multipole expansion;
-        requires a tree built with quadrupole=True (default False)
+    quadrupole -- if True, include node quadrupole moments in the multipole expansion; requires a tree built with quadrupole=True (default False)
     Returns:
     shape (N,) array of potential values at each point in pos
     """
@@ -282,8 +281,7 @@ def AccelTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, quadr
     Optional arguments:
     G -- gravitational constant (default 1.0)
     theta -- accuracy parameter, smaller is more accurate, larger is faster (default 0.7)
-    quadrupole -- if True, include node quadrupole moments in the multipole expansion;
-        requires a tree built with quadrupole=True (default False)
+    quadrupole -- if True, include node quadrupole moments in the multipole expansion; requires a tree built with quadrupole=True (default False)
     Returns:
     shape (N,3) array of acceleration values at each point in pos_target
     """
@@ -360,14 +358,11 @@ def DensityCorrWalk(
     rbins - 1D array of radial bin edges; must be logarithmically spaced
 
     Keyword arguments:
-    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at
-        most this factor times the radial bin width (default 100)
-    no - index of the top-level node to start the walk from; defaults to the global root, can be a
-        subnode in principle for e.g. parallelization
+    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at most this factor times the radial bin width (default 100)
+    no - index of the top-level node to start the walk from; defaults to the global root, can be a subnode in principle for e.g. parallelization
     theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     boxsize - finite periodic box size, if periodic boundary conditions are to be used (default 0)
-    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted
-        kernel instead of assigning each node to a single bin (default False)
+    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
     shape (len(rbins)-1,) array of total mass in each radial bin
@@ -448,12 +443,10 @@ def DensityCorrFunc_tree(
     rbins -- 1D array of radial bin edges; must be logarithmically spaced
 
     Optional arguments:
-    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until
-        their side length is at most this factor * the radial bin width (default 100)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 100)
     theta -- cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
-    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted
-        kernel instead of assigning each node to a single bin (default False)
+    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
     shape (len(rbins)-1,) array of mean mass per radial bin, averaged over all points
@@ -503,17 +496,14 @@ def VelocityCorrWalk(
     rbins - 1D array of radial bin edges; must be logarithmically spaced
 
     Keyword arguments:
-    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at
-        most this factor times the radial bin width (default 100)
-    no - index of the top-level node to start the walk from; defaults to the global root, can be a
-        subnode in principle for e.g. parallelization
+    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at most this factor times the radial bin width (default 100)
+    no - index of the top-level node to start the walk from; defaults to the global root, can be a subnode in principle for e.g. parallelization
     theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     boxsize - finite periodic box size, if periodic boundary conditions are to be used (default 0)
-    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted
-        kernel instead of assigning each node to a single bin (default False)
+    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    (wtsums, binsums) - per-bin weight sums and weighted v.v' sums; the caller divides one by the
+    (wtsums, binsums) - per-bin weight sums and weighted v . v' sums; the caller divides one by the
     other to form the correlation function
     """
     if no < 0:
@@ -593,7 +583,7 @@ def VelocityCorrFunc_tree(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Mass-weighted velocity correlation function <v.v'> in radial bins, averaged over all points.
+    """Mass-weighted velocity correlation function of v . v' in radial bins, averaged over all points.
 
     Arguments:
     pos -- shape (N,3) array of particle positions
@@ -603,12 +593,10 @@ def VelocityCorrFunc_tree(
     rbins -- 1D array of radial bin edges; must be logarithmically spaced
 
     Optional arguments:
-    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until
-        their side length is at most this factor * the radial bin width (default 100)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 100)
     theta -- cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
-    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted
-        kernel instead of assigning each node to a single bin (default False)
+    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
     shape (len(rbins)-1,) array of the weighted mean of v.v' in each radial bin
@@ -661,17 +649,14 @@ def VelocityStructWalk(
     rbins - 1D array of radial bin edges; must be logarithmically spaced
 
     Keyword arguments:
-    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at
-        most this factor times the radial bin width (default 100)
-    no - index of the top-level node to start the walk from; defaults to the global root, can be a
-        subnode in principle for e.g. parallelization
+    max_bin_size_ratio - controls binning accuracy: nodes are opened until their side length is at most this factor times the radial bin width (default 100)
+    no - index of the top-level node to start the walk from; defaults to the global root, can be a subnode in principle for e.g. parallelization
     theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     boxsize - finite periodic box size, if periodic boundary conditions are to be used (default 0)
-    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted
-        kernel instead of assigning each node to a single bin (default False)
+    weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    (wtsums, binsums) - per-bin weight sums and weighted |v-v'|^2 sums; the caller divides one by
+    (wtsums, binsums) - per-bin weight sums and weighted (v - v')^2 sums; the caller divides one by
     the other to form the structure function
     """
     if no < 0:
@@ -751,7 +736,7 @@ def VelocityStructFunc_tree(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Mass-weighted velocity structure function <|v-v'|^2> in radial bins, averaged over all points.
+    """Mass-weighted velocity structure function of (v - v')^2 in radial bins, averaged over all points.
 
     Arguments:
     pos -- shape (N,3) array of particle positions
@@ -761,15 +746,13 @@ def VelocityStructFunc_tree(
     rbins -- 1D array of radial bin edges; must be logarithmically spaced
 
     Optional arguments:
-    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until
-        their side length is at most this factor * the radial bin width (default 100)
+    max_bin_size_ratio -- controls the accuracy of the binning - tree nodes are subdivided until their side length is at most this factor * the radial bin width (default 100)
     theta -- cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     boxsize -- finite periodic box size, if periodic boundary conditions are to be used (default 0)
-    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted
-        kernel instead of assigning each node to a single bin (default False)
+    weighted_binning -- (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    shape (len(rbins)-1,) array of the weighted mean of |v-v'|^2 in each radial bin
+    shape (len(rbins)-1,) array of the weighted mean of (v - v')^2 in each radial bin
     """
 
     Nthreads = get_num_threads()
@@ -1019,8 +1002,7 @@ def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=
 
         Randomly orients the raygrid for each particle.
 
-    theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate
-        (default 0.7)
+    theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     """
     # scoped, not global -- see the note in PotentialTarget_tree
     with parallel_chunksize(10000):

@@ -27,13 +27,18 @@ def PotentialTarget_bruteforce(x_target, softening_target, x_source, m_source, s
             for k in range(3):
                 dx[k] = x_target[i, k] - x_source[j, k]
             r = sqrt(dx[0] * dx[0] + dx[1] * dx[1] + dx[2] * dx[2])
+            if r == 0:
+                # A target sitting exactly on a source contributes nothing. The treewalk and
+                # AccelTarget_bruteforce both skip r==0, and Potential_bruteforce excludes it
+                # by construction; without this the tree and bruteforce methods disagree by
+                # m*PotentialKernel(0,h), so 'adaptive' silently changes the answer with N.
+                continue
 
             h = max(softening_source[j], softening_target[i])
             if r < h:
                 potential[i] += m_source[j] * PotentialKernel(r, h)
             else:
-                if r > 0:
-                    potential[i] -= m_source[j] / r
+                potential[i] -= m_source[j] / r
     return G * potential
 
 

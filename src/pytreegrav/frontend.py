@@ -11,6 +11,21 @@ from .bruteforce_symmetric import Potential_bruteforce_symmetric, Accel_brutefor
 from .misc import *
 
 
+def checkTreeQuadrupoles(tree, quadrupole):
+    """Raise ValueError if a quadrupole treewalk is requested on a tree that lacks them.
+
+    The walk kernels index tree.Quadrupoles based only on the walk's quadrupole flag, but
+    that array is allocated only when the tree itself was built with quadrupole=True. The
+    mismatch is an out-of-bounds read, which numba does not bounds-check, so without this
+    guard it segfaults instead of raising.
+    """
+    if quadrupole and not tree.HasQuads:
+        raise ValueError(
+            "quadrupole=True requires a tree built with quadrupole moments: pass a tree from "
+            "ConstructTree(..., quadrupole=True), or evaluate with quadrupole=False."
+        )
+
+
 def valueTestMethod(method):
     """Raise TypeError/ValueError unless method is one of 'adaptive', 'bruteforce', 'tree'."""
     methods = ["adaptive", "bruteforce", "tree"]
@@ -207,6 +222,7 @@ def Potential(
                 np.float64(softening),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+        checkTreeQuadrupoles(tree, quadrupole)
         idx = tree.TreewalkIndices
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
@@ -341,6 +357,7 @@ def PotentialTarget(
                 np.float64(softening_source),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+        checkTreeQuadrupoles(tree, quadrupole)
         # external targets are not spatially ordered; Morton-sort them so grouping is effective
         tsort = _morton_order(np.float64(pos_target))
         phi_sorted = PotentialTarget_grouped(
@@ -446,6 +463,7 @@ def Accel(
                 np.float64(softening),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+        checkTreeQuadrupoles(tree, quadrupole)
         idx = tree.TreewalkIndices
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
@@ -580,6 +598,7 @@ def AccelTarget(
                 np.float64(softening_source),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+        checkTreeQuadrupoles(tree, quadrupole)
         # external targets are not spatially ordered; Morton-sort them so grouping is effective
         tsort = _morton_order(np.float64(pos_target))
         g_sorted = AccelTarget_grouped(
@@ -790,7 +809,7 @@ def VelocityStructFunc(
     boxsize=0,
     weighted_binning=False,
 ):
-    """Computes the structure function for a vector field: the average value of |v(x)-v(x+r)|^2, in radial bins for r
+    """Computes the structure function for a vector field: the average value of (v(x) - v(x+r))^2, in radial bins for r
 
     Parameters
     ----------

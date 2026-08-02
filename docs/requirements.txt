@@ -1,4 +1,5 @@
-sphinx_rtd_theme
+furo
+ipython  # provides the 'ipython3' Pygments lexer used by the notebook-exported pages
 numba
 numpy
 scipy
