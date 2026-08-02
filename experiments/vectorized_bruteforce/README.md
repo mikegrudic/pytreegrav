@@ -80,7 +80,50 @@ avoidable code pattern.
 | `bodysize.py` | Rules out loop-body size. |
 | `alias_probe.py` | Rules out alias-check budget (one scatter array is already enough to block). |
 | `avx_ceiling.py` | Quantifies the headroom: divide ≈ 80% of runtime; float32 buys only 1.13×. |
+| `avx512_probe.py` | Reaching 512-bit vectors via `--force-vector-width=8`, and what it costs. |
 | `bench_avx.py`, `verify_avx.py` | Benchmark / correctness-codegen-momentum checks for `bruteforce_avx`. |
+
+## AVX-512
+
+By default numba emits only 256-bit `ymm`, because LLVM sets `prefer-vector-width=256` on
+Cascade Lake to avoid AVX-512 downclocking. That caps the kernels at ~43% of AVX2 peak and
+~22% of the AVX-512 ceiling.
+
+`--prefer-vector-width=512` does **not** help (still 0 `zmm`) — it is a function attribute the
+compiler frontend stamps on, not a `cl::opt` the vectorizer reads, so numba never sets it.
+`--force-vector-width=8` does work, via `llvmlite.binding.set_option`:
+
+```python
+import llvmlite.binding as llvm
+llvm.set_option("numba", "--force-vector-width=8")   # before importing the kernels
+```
+
+Measured at N=50000, 32 threads (`avx512_probe.py`):
+
+| | baseline | force-VF=8 | |
+| --- | --- | --- | --- |
+| avx (non-symmetric) | 197.0 ms, 432 GFLOP/s | **120.2 ms, 707 GFLOP/s** | **1.64×** |
+| sym_vec (symmetric) | 163.3 ms | 156.5 ms | 1.04× |
+| shipped symmetric | 410.9 ms | 409.7 ms | 1.00× |
+| tree walk (N=200k) | 279.1 ms | 275.3 ms | 1.01× |
+| tree build (N=200k) | 126.9 ms | 123.9 ms | 1.02× |
+
+Accuracy is unaffected (1.9e-15 → 2.2e-15 unsoftened, 4.1e-15 → 4.0e-15 softened).
+
+Three things to note:
+
+- **Only the non-symmetric kernel gains.** `sym_vec`'s inner loop is `n-i-1` long and shrinks
+  toward zero as `i` advances, so most rows are too short for 8-wide vectors. The kernel that
+  is *better* in wall-clock benefits least.
+- **The downclock is real**: 3.90 → 3.45 GHz (−12%) under the AVX kernel. The 1.64× is net of
+  that, so the raw vector gain is nearer 1.85×.
+- **No collateral damage was observed** here — tree walk, tree build and the shipped scalar
+  kernel are all unchanged within noise. But "harmless on the five things measured" is not
+  "safe": the flag forces VF=8 on *every* loop numba compiles for the life of the process,
+  including user code, and it is an `-mllvm` internal with no cross-version guarantee.
+
+So it is a reasonable thing for a user to set in a script they fully control, and not
+something to put in library code.
 
 ## Dead ends, so nobody repeats them
 
@@ -95,6 +138,8 @@ avoidable code pattern.
   AVX-512 hardware.
 - **float32** — only 1.13×, because the divide blocks vectorization in single precision too.
 - **`__restrict` in C++** — zero effect; LLVM already versions the loop.
+- **`--prefer-vector-width=512`** — the documented knob for 512-bit vectors; numba never
+  sets the attribute it corresponds to, so it does nothing. Use `--force-vector-width=8`.
 
 ## Before any of this ships
 
@@ -111,5 +156,5 @@ avoidable code pattern.
 - Tests would need their own tolerance (~1e-14, not the suite's 1e-12) since the NR rsqrt is
   not bit-exact, plus a **codegen assertion** — if a future edit reintroduces a runtime loop
   bound or a branch, this silently reverts to scalar while the answers stay correct.
-- Only ~43% of AVX2 peak, and LLVM never emits `zmm` (Cascade Lake defaults to
-  `prefer-vector-width=256`), so there may be another ~2× in 512-bit vectors.
+- AVX-512 is reachable but only via a process-global override — see below. Left off by
+  default.

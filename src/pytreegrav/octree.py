@@ -101,31 +101,89 @@ def _morton_keys(points, center, size):
 def _radix_argsort(keys):
     """Stable LSD radix sort of nonnegative int64 keys, returning the sorting permutation.
 
-    Processes 8 bits per pass (base 256), covering the 63 significant bits of a Morton key in 8
-    passes.  O(N) in the number of keys.
+    Carries the keys alongside the indices so every pass reads sequentially. Reading
+    keys[idx[i]] instead (an indirect gather, twice per pass) measured 3.4x slower at N=1e7.
+    11 bits per pass covers 63 bits in 6 passes with a 2048-entry histogram that stays in L1.
     """
     n = keys.shape[0]
     idx = np.arange(n).astype(np.int64)
-    tmp = np.empty(n, dtype=np.int64)
-    RADIX_BITS = 8
-    RADIX = 1 << RADIX_BITS  # 256
+    k_cur = keys.copy()
+    idx_t = np.empty(n, dtype=np.int64)
+    k_t = np.empty(n, dtype=np.int64)
+    RADIX_BITS = 11
+    RADIX = 1 << RADIX_BITS
     mask = RADIX - 1
     count = np.empty(RADIX + 1, dtype=np.int64)
     shift = 0
     while shift < 63:
         count[:] = 0
         for i in range(n):
-            digit = (keys[idx[i]] >> shift) & mask
-            count[digit + 1] += 1
+            count[((k_cur[i] >> shift) & mask) + 1] += 1
         for b in range(RADIX):
             count[b + 1] += count[b]
         for i in range(n):
-            digit = (keys[idx[i]] >> shift) & mask
-            tmp[count[digit]] = idx[i]
-            count[digit] += 1
-        idx, tmp = tmp, idx
+            d = (k_cur[i] >> shift) & mask
+            p = count[d]
+            idx_t[p] = idx[i]
+            k_t[p] = k_cur[i]
+            count[d] += 1
+        idx, idx_t = idx_t, idx
+        k_cur, k_t = k_t, k_cur
         shift += RADIX_BITS
     return idx
+
+
+@njit
+def ComputeMomentsLinked(tree, no):
+    """ComputeMoments without a `children` array: iterate children via FirstSubnode/NextBranch.
+
+    A node's children are the chain starting at FirstSubnode[no] and following NextBranch until
+    it reaches NextBranch[no] (which the last child points at), so no separate child table is
+    needed. Same recursion and same arithmetic as ComputeMoments otherwise.
+    """
+    quad = zeros((3, 3))
+    if no < tree.NumParticles:
+        return tree.Softenings[no], tree.Masses[no], quad, tree.Coordinates[no]
+    m = 0.0
+    com = zeros(3)
+    hmax = 0.0
+    stop = tree.NextBranch[no]
+    c = tree.FirstSubnode[no]
+    # `c >= 0` is redundant on a well-formed tree (the last child points at `stop`), but a
+    # mislinked chain would otherwise run off the end and index NextBranch[-1] forever
+    while c != stop and c >= 0:
+        hi, mi, quadi, comi = ComputeMomentsLinked(tree, c)
+        m += mi
+        com += mi * comi
+        hmax = max(hi, hmax)
+        c = tree.NextBranch[c]
+    tree.Masses[no] = m
+    com = com / m
+    if tree.HasQuads:
+        c = tree.FirstSubnode[no]
+        while c != stop and c >= 0:
+            mi = tree.Masses[c]
+            comi = tree.Coordinates[c]
+            quadi = tree.Quadrupoles[c]
+            ri = comi - com
+            r2 = 0.0
+            for k in range(3):
+                r2 += ri[k] * ri[k]
+            for k in range(3):
+                for l in range(3):
+                    quad[k, l] += quadi[k, l] + mi * 3 * ri[k] * ri[l]
+                    if k == l:
+                        quad[k, l] -= mi * r2
+            c = tree.NextBranch[c]
+        tree.Quadrupoles[no] = quad
+    delta = 0.0
+    for dim in range(3):
+        dx = com[dim] - tree.Coordinates[no, dim]
+        delta += dx * dx
+    tree.Deltas[no] = np.sqrt(delta)
+    tree.Coordinates[no] = com
+    tree.Softenings[no] = hmax
+    return hmax, m, quad, com
 
 
 @jitclass(spec)
@@ -146,11 +204,13 @@ class Octree:
         self.TreewalkIndices = -ones(points.shape[0], dtype=np.int64)
         self.HasQuads = quadrupole
 
-        if radix and morton_order:
+        radix_path = radix and morton_order
+        children = -ones((1, 8), dtype=np.int64)  # unused on the radix path; typing placeholder
+        if radix_path:
             # Radix-sort build: a single linear pass over Morton-sorted points produces the tree
-            # already in Morton order, so no provisional build or GetWalkIndices pass is needed.
-            children = self.BuildTreeRadix(points, masses, softening)
-            SetupTreewalk(self, self.NumParticles, children)
+            # already in Morton order, and links FirstSubnode/NextBranch as it goes -- so there is
+            # no `children` table (0.96 GB at N=1e7, two-thirds of it unused) and no SetupTreewalk.
+            self.BuildTreeRadix(points, masses, softening)
         else:
             # Legacy insertion build (used for radix=False or morton_order=False).
             # first provisional treebuild to get the ordering right
@@ -171,7 +231,10 @@ class Octree:
 
         if compute_moments:
             # compute centers of mass, etc.
-            ComputeMoments(self, self.NumParticles, children)
+            if radix_path:
+                ComputeMomentsLinked(self, self.NumParticles)
+            else:
+                ComputeMoments(self, self.NumParticles, children)
 
     def BuildTree(self, points, masses, softening):
         # initialize random seed in case of non-unique positions
@@ -295,7 +358,6 @@ class Octree:
         for dim in range(3):
             self.Coordinates[root, dim] = center[dim]
 
-        children = -ones((self.NumNodes, 8), dtype=np.int64)
         new_node_idx = self.NumParticles + 1
 
         # explicit stack of node ranges still to be partitioned: (node, lo, hi, shift, round)
@@ -326,7 +388,7 @@ class Octree:
                 # We have exhausted the current key's bits but >1 point remains in this cell.
                 if rnd >= MORTON_MAX_ROUNDS:
                     # points are coincident to floating-point precision: park them in a bucket
-                    children, new_node_idx = self.BuildBucket(children, node, lo, hi, new_node_idx)
+                    new_node_idx = self.BuildBucket(node, lo, hi, new_node_idx)
                     continue
                 # re-key this group relative to the node's (sub-)cell and re-sort the slice
                 self.RekeySlice(keys_sorted, node, lo, hi)
@@ -334,6 +396,11 @@ class Octree:
                 rnd += 1
 
             # partition [lo, hi) by the 3-bit digit at the current shift (contiguous, since sorted)
+            # Children are discovered in increasing digit order, which IS sibling order, so the
+            # FirstSubnode/NextBranch links can be written here directly -- no `children` array
+            # and no SetupTreewalk pass. NextBranch[node] is already set by node's own parent
+            # (the split is top-down), and the root's is -1 from Initialize.
+            last_child = -1
             i = lo
             while i < hi:
                 d = (keys_sorted[i] >> shift) & 7
@@ -341,17 +408,16 @@ class Octree:
                 while j < hi and ((keys_sorted[j] >> shift) & 7) == d:
                     j += 1
                 if j - i == 1:  # single particle -> becomes a leaf child directly
-                    children[node, d] = i
+                    c = i
                 else:  # >1 particle in this octant -> create a child node and recurse
                     while new_node_idx + 1 > self.NumNodes:
                         size_increase = increase_tree_size(self)
-                        children = concatenate((children, -ones((size_increase, 8), dtype=np.int64)))
                     cnode = new_node_idx
                     new_node_idx += 1
                     for k in range(3):
                         self.Coordinates[cnode, k] = self.Coordinates[node, k] + self.Sizes[node] * octant_offsets[d, k]
                     self.Sizes[cnode] = self.Sizes[node] * 0.5
-                    children[node, d] = cnode
+                    c = cnode
                     if top >= st_node.shape[0]:  # grow the stack if needed
                         add = st_node.shape[0]
                         st_node = concatenate((st_node, np.empty(add, dtype=np.int64)))
@@ -365,9 +431,16 @@ class Octree:
                     st_shift[top] = shift - 3
                     st_round[top] = rnd
                     top += 1
+                if last_child < 0:
+                    self.FirstSubnode[node] = c
+                else:
+                    self.NextBranch[last_child] = c
+                last_child = c
                 i = j
+            if last_child >= 0:
+                self.NextBranch[last_child] = self.NextBranch[node]
 
-        return children
+        return new_node_idx
 
     def RekeySlice(self, keys_sorted, node, lo, hi):
         """Recompute Morton keys for particles [lo, hi) relative to node's cell and re-sort them.
@@ -407,34 +480,46 @@ class Octree:
             self.TreewalkIndices[lo + a] = new_idx[a]
             keys_sorted[lo + a] = new_keys[a]
 
-    def BuildBucket(self, children, node, lo, hi, new_node_idx):
+    def BuildBucket(self, node, lo, hi, new_node_idx):
         """Attach particles [lo, hi), coincident to float precision, as a chain of nodes under node.
 
-        Each node holds up to 8 particle children; when more remain, slot 7 links to a further node.
-        Geometry is degenerate (the points coincide) but valid, and no particle is dropped.  Returns
-        the (possibly reallocated) children array and the updated new_node_idx.
+        Each node holds up to 8 particle children; when more remain, the 8th slot links to a
+        further node. Links FirstSubnode/NextBranch directly, as the digit loop does. Geometry is
+        degenerate (the points coincide) but valid, and no particle is dropped.
         """
         count = hi - lo
         cur = node
         slot = 0
+        last = -1
         for jj in range(count):
             remaining = count - 1 - jj
             if slot == 7 and remaining > 0:
-                # reserve slot 7 as a link to a continuation node
                 while new_node_idx + 1 > self.NumNodes:
                     size_increase = increase_tree_size(self)
-                    children = concatenate((children, -ones((size_increase, 8), dtype=np.int64)))
                 nn = new_node_idx
                 new_node_idx += 1
                 for k in range(3):
                     self.Coordinates[nn, k] = self.Coordinates[cur, k] + self.Sizes[cur] * octant_offsets[7, k]
                 self.Sizes[nn] = self.Sizes[cur] * 0.5
-                children[cur, 7] = nn
+                # nn is the last child of cur; then we continue underneath nn
+                if last < 0:
+                    self.FirstSubnode[cur] = nn
+                else:
+                    self.NextBranch[last] = nn
+                self.NextBranch[nn] = self.NextBranch[cur]
                 cur = nn
                 slot = 0
-            children[cur, slot] = lo + jj
+                last = -1
+            c = lo + jj
+            if last < 0:
+                self.FirstSubnode[cur] = c
+            else:
+                self.NextBranch[last] = c
+            last = c
             slot += 1
-        return children, new_node_idx
+        if last >= 0:
+            self.NextBranch[last] = self.NextBranch[cur]
+        return new_node_idx
 
     def GetWalkIndices(self):  # gets the ordering of the particles in the treewalk
         index = 0
