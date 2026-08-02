@@ -22,7 +22,7 @@ kernel, so the shared core costs only a few percent over a hand-fused walk.
 
 import numpy as np
 from math import sqrt
-from numba import njit, prange, set_parallel_chunksize
+from numba import njit, prange, parallel_chunksize
 
 from .kernel import ForceKernel, PotentialKernel
 from .treewalk import acceptance_criterion
@@ -189,67 +189,68 @@ def _make_core(kernel, parallel):
         N = pos.shape[0]
         out = np.zeros((N, W))
         ngroups = (N + group_size - 1) // group_size
-        set_parallel_chunksize(64)
-        for gi in prange(ngroups):
-            a = gi * group_size
-            b = min(a + group_size, N)
-            m = b - a
-            # group bounding box + max softening
-            bmin0 = pos[a, 0]
-            bmin1 = pos[a, 1]
-            bmin2 = pos[a, 2]
-            bmax0 = pos[a, 0]
-            bmax1 = pos[a, 1]
-            bmax2 = pos[a, 2]
-            hmax = soft[a]
-            for t in range(a + 1, b):
-                if pos[t, 0] < bmin0:
-                    bmin0 = pos[t, 0]
-                elif pos[t, 0] > bmax0:
-                    bmax0 = pos[t, 0]
-                if pos[t, 1] < bmin1:
-                    bmin1 = pos[t, 1]
-                elif pos[t, 1] > bmax1:
-                    bmax1 = pos[t, 1]
-                if pos[t, 2] < bmin2:
-                    bmin2 = pos[t, 2]
-                elif pos[t, 2] > bmax2:
-                    bmax2 = pos[t, 2]
-                if soft[t] > hmax:
-                    hmax = soft[t]
+        # scoped, not global -- see the note in treewalk.PotentialTarget_tree
+        with parallel_chunksize(64):
+            for gi in prange(ngroups):
+                a = gi * group_size
+                b = min(a + group_size, N)
+                m = b - a
+                # group bounding box + max softening
+                bmin0 = pos[a, 0]
+                bmin1 = pos[a, 1]
+                bmin2 = pos[a, 2]
+                bmax0 = pos[a, 0]
+                bmax1 = pos[a, 1]
+                bmax2 = pos[a, 2]
+                hmax = soft[a]
+                for t in range(a + 1, b):
+                    if pos[t, 0] < bmin0:
+                        bmin0 = pos[t, 0]
+                    elif pos[t, 0] > bmax0:
+                        bmax0 = pos[t, 0]
+                    if pos[t, 1] < bmin1:
+                        bmin1 = pos[t, 1]
+                    elif pos[t, 1] > bmax1:
+                        bmax1 = pos[t, 1]
+                    if pos[t, 2] < bmin2:
+                        bmin2 = pos[t, 2]
+                    elif pos[t, 2] > bmax2:
+                        bmax2 = pos[t, 2]
+                    if soft[t] > hmax:
+                        hmax = soft[t]
 
-            acc = np.zeros((m, W))
-            no = tree.NumParticles  # root
-            while no > -1:
-                cx = tree.Coordinates[no, 0]
-                cy = tree.Coordinates[no, 1]
-                cz = tree.Coordinates[no, 2]
-                # nearest distance from node position to the group's bbox (0 if inside)
-                dxm = 0.0
-                if cx < bmin0:
-                    dxm = bmin0 - cx
-                elif cx > bmax0:
-                    dxm = cx - bmax0
-                dym = 0.0
-                if cy < bmin1:
-                    dym = bmin1 - cy
-                elif cy > bmax1:
-                    dym = cy - bmax1
-                dzm = 0.0
-                if cz < bmin2:
-                    dzm = bmin2 - cz
-                elif cz > bmax2:
-                    dzm = cz - bmax2
-                r_min = sqrt(dxm * dxm + dym * dym + dzm * dzm)
-                h = max(tree.Softenings[no], hmax)
-                if no < tree.NumParticles or acceptance_criterion(r_min, h, tree.Sizes[no], tree.Deltas[no], theta):
-                    kernel(no, a, b, pos, soft, tree, acc)
-                    no = tree.NextBranch[no]
-                else:
-                    no = tree.FirstSubnode[no]
-            for t in range(a, b):
-                for k in range(W):
-                    out[t, k] = G * acc[t - a, k]
+                acc = np.zeros((m, W))
+                no = tree.NumParticles  # root
+                while no > -1:
+                    cx = tree.Coordinates[no, 0]
+                    cy = tree.Coordinates[no, 1]
+                    cz = tree.Coordinates[no, 2]
+                    # nearest distance from node position to the group's bbox (0 if inside)
+                    dxm = 0.0
+                    if cx < bmin0:
+                        dxm = bmin0 - cx
+                    elif cx > bmax0:
+                        dxm = cx - bmax0
+                    dym = 0.0
+                    if cy < bmin1:
+                        dym = bmin1 - cy
+                    elif cy > bmax1:
+                        dym = cy - bmax1
+                    dzm = 0.0
+                    if cz < bmin2:
+                        dzm = bmin2 - cz
+                    elif cz > bmax2:
+                        dzm = cz - bmax2
+                    r_min = sqrt(dxm * dxm + dym * dym + dzm * dzm)
+                    h = max(tree.Softenings[no], hmax)
+                    if no < tree.NumParticles or acceptance_criterion(r_min, h, tree.Sizes[no], tree.Deltas[no], theta):
+                        kernel(no, a, b, pos, soft, tree, acc)
+                        no = tree.NextBranch[no]
+                    else:
+                        no = tree.FirstSubnode[no]
+                for t in range(a, b):
+                    for k in range(W):
+                        out[t, k] = G * acc[t - a, k]
         return out
 
     return njit(core, fastmath=True, parallel=parallel)

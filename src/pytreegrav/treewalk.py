@@ -1,5 +1,5 @@
 from numpy import sqrt, empty, zeros, empty_like, zeros_like, dot, fabs
-from numba import njit, prange, get_num_threads, set_parallel_chunksize, int64, float64
+from numba import njit, prange, get_num_threads, parallel_chunksize, int64, float64
 from math import copysign
 from .kernel import *
 from .misc import *
@@ -253,13 +253,15 @@ def PotentialTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, q
     shape (N,) array of potential values at each point in pos
     """
     result = empty(pos_target.shape[0])
-    set_parallel_chunksize(10000)
-    if quadrupole:
-        for i in prange(pos_target.shape[0]):
-            result[i] = G * PotentialWalk_quad(pos_target[i], tree, softening=softening_target[i], theta=theta)
-    else:
-        for i in prange(pos_target.shape[0]):
-            result[i] = G * PotentialWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
+    # scope the chunksize instead of setting it globally: the global form leaks process-wide
+    # and halves the throughput of every unrelated prange afterwards, including in user code
+    with parallel_chunksize(10000):
+        if quadrupole:
+            for i in prange(pos_target.shape[0]):
+                result[i] = G * PotentialWalk_quad(pos_target[i], tree, softening=softening_target[i], theta=theta)
+        else:
+            for i in prange(pos_target.shape[0]):
+                result[i] = G * PotentialWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
     return result
 
 
@@ -283,13 +285,15 @@ def AccelTarget_tree(pos_target, softening_target, tree, G=1.0, theta=0.7, quadr
     if softening_target is None:
         softening_target = zeros(pos_target.shape[0])
     result = empty(pos_target.shape)
-    set_parallel_chunksize(10000)
-    if quadrupole:
-        for i in prange(pos_target.shape[0]):
-            result[i] = G * AccelWalk_quad(pos_target[i], tree, softening=softening_target[i], theta=theta)
-    else:
-        for i in prange(pos_target.shape[0]):
-            result[i] = G * AccelWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
+    # scope the chunksize instead of setting it globally: the global form leaks process-wide
+    # and halves the throughput of every unrelated prange afterwards, including in user code
+    with parallel_chunksize(10000):
+        if quadrupole:
+            for i in prange(pos_target.shape[0]):
+                result[i] = G * AccelWalk_quad(pos_target[i], tree, softening=softening_target[i], theta=theta)
+        else:
+            for i in prange(pos_target.shape[0]):
+                result[i] = G * AccelWalk(pos_target[i], tree, softening=softening_target[i], theta=theta)
     return result
 
 
@@ -963,24 +967,24 @@ def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=
         Randomly orients the raygrid for each particle.
 
     """
-    set_parallel_chunksize(10000)
-
-    if rays is None:  # do angular-binned column density
-        result = empty((pos_target.shape[0], 6))
-        for i in prange(pos_target.shape[0]):
-            result[i] = ColumnDensityWalk_binned(pos_target[i], tree, theta)
-    elif randomize_rays:
-        # use the multi-ray treewalk; more efficient
-        result = empty((pos_target.shape[0], len(rays)))
-        for i in prange(pos_target.shape[0]):
-            rays_random = rays @ random_rotation(i)
-            result[i] = ColumnDensityWalk_multiray(pos_target[i], rays_random, tree)
-    else:
-        result = empty((pos_target.shape[0], len(rays)))
-        for i in range(rays.shape[0]):
-            # outer loop over rays - empirically better access pattern
-            for j in prange(pos_target.shape[0]):
-                result[j, i] = ColumnDensityWalk_singleray(pos_target[j], rays[i], tree)
+    # scoped, not global -- see the note in PotentialTarget_tree
+    with parallel_chunksize(10000):
+        if rays is None:  # do angular-binned column density
+            result = empty((pos_target.shape[0], 6))
+            for i in prange(pos_target.shape[0]):
+                result[i] = ColumnDensityWalk_binned(pos_target[i], tree, theta)
+        elif randomize_rays:
+            # use the multi-ray treewalk; more efficient
+            result = empty((pos_target.shape[0], len(rays)))
+            for i in prange(pos_target.shape[0]):
+                rays_random = rays @ random_rotation(i)
+                result[i] = ColumnDensityWalk_multiray(pos_target[i], rays_random, tree)
+        else:
+            result = empty((pos_target.shape[0], len(rays)))
+            for i in range(rays.shape[0]):
+                # outer loop over rays - empirically better access pattern
+                for j in prange(pos_target.shape[0]):
+                    result[j, i] = ColumnDensityWalk_singleray(pos_target[j], rays[i], tree)
     return result
 
 

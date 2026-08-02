@@ -7,6 +7,7 @@ from .dynamic_tree import *
 from .treewalk import *
 from .grouped_treewalk import AccelTarget_grouped, PotentialTarget_grouped, _morton_order
 from .bruteforce import *
+from .bruteforce_symmetric import Potential_bruteforce_symmetric, Accel_bruteforce_symmetric, SYMMETRIC_NMIN
 from .misc import *
 
 
@@ -187,7 +188,12 @@ def Potential(
 
     if method == "bruteforce":  # we're using brute force
         if parallel:
-            phi = Potential_bruteforce_parallel(pos, m, softening, G=G)
+            # the symmetrized kernel runs two parallel regions and per-thread buffers;
+            # that only pays for itself once there are enough interactions to amortize it
+            if len(pos) >= SYMMETRIC_NMIN:
+                phi = Potential_bruteforce_symmetric(pos, m, softening, G=G)
+            else:
+                phi = Potential_bruteforce_parallel(pos, m, softening, G=G)
         else:
             phi = Potential_bruteforce(pos, m, softening, G=G)
         if return_tree:
@@ -422,7 +428,11 @@ def Accel(
 
     if method == "bruteforce":  # we're using brute force
         if parallel:
-            g = Accel_bruteforce_parallel(pos, m, softening, G=G)
+            # see the note in Potential: small problems stay on the simpler kernel
+            if len(pos) >= SYMMETRIC_NMIN:
+                g = Accel_bruteforce_symmetric(pos, m, softening, G=G)
+            else:
+                g = Accel_bruteforce_parallel(pos, m, softening, G=G)
         else:
             g = Accel_bruteforce(pos, m, softening, G=G)
         if return_tree:

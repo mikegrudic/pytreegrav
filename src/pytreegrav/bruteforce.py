@@ -21,8 +21,8 @@ def PotentialTarget_bruteforce(x_target, softening_target, x_source, m_source, s
     shape (N,) array of potential values
     """
     potential = np.zeros(x_target.shape[0])
-    dx = np.empty(3)
     for i in prange(x_target.shape[0]):
+        dx = np.empty(3)  # allocate inside prange so it is thread-private by construction
         for j in range(x_source.shape[0]):
             for k in range(3):
                 dx[k] = x_target[i, k] - x_source[j, k]
