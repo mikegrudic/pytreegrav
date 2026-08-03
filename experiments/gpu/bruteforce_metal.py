@@ -25,8 +25,8 @@ copy here.  A discrete GPU would pay PCIe on top of this.
 import argparse
 import time
 
-import numpy as np
 import mlx.core as mx
+import numpy as np
 
 _SRC = """
     uint tid = thread_position_in_grid.x;
@@ -170,6 +170,7 @@ def main():
     args = p.parse_args()
 
     from numba import get_num_threads
+
     from pytreegrav.bruteforce import Potential_bruteforce_parallel
     from pytreegrav.bruteforce_symmetric import Potential_bruteforce_symmetric
 

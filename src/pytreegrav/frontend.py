@@ -957,6 +957,15 @@ def ColumnDensity(
         centers integrated along the rays
     """
 
+    if np.any(np.asarray(radii) <= 0):
+        # These particles are point-like, so they have no geometric cross-section and obscure
+        # nothing.  That is the right h -> 0 limit, but it silently drops their mass from the
+        # column, so say so rather than letting it pass unnoticed.
+        warnings.warn(
+            "Some particle radii are <= 0; these particles are point-like and contribute no column "
+            "density. Supply a nonzero radius if their mass should be included."
+        )
+
     if tree is None:
         tree = ConstructTree(
             np.float64(pos),

@@ -8,7 +8,6 @@ O(1) flop/byte, not an N-body kernel.  It is numerically correct (6e-8 vs the CP
 makes it dangerous: the number looks like a measurement of the idea and is a measurement of the
 implementation.  See README.md.
 
-
 Computes the same quantity as pytreegrav.bruteforce.Potential_bruteforce_parallel:
 
     phi_i = G * sum_{j != i}  m_j * PotentialKernel(r_ij, h_ij)   if r_ij <  h_ij
@@ -16,9 +15,10 @@ Computes the same quantity as pytreegrav.bruteforce.Potential_bruteforce_paralle
 
 with h_ij = max(h_i, h_j) and the cubic-spline PotentialKernel from pytreegrav/kernel.py.
 
-The GPU path is tiled over (target, source) blocks and mx.compile'd so the tile body fuses into
-one kernel instead of materialising (TT, TS) temporaries per term.  All GPU math is float32; the
-accumulator is float32 too, since Metal has no float64 at all.
+The GPU path is tiled over (target, source) blocks and mx.compile'd in the *hope* that the tile
+body fuses.  It does not: the trailing sum(axis=1) stays a separate pass, so each term is
+materialised.  All GPU math is float32; the accumulator is float32 too, since Metal has no
+float64 at all.
 
 Caveat worth remembering when reading the numbers: Apple silicon has unified memory, so there is
 no host->device copy here.  A discrete GPU would pay PCIe on top of whatever this measures.
@@ -27,15 +27,26 @@ no host->device copy here.  A discrete GPU would pay PCIe on top of whatever thi
 import argparse
 import time
 
-import numpy as np
 import mlx.core as mx
+import numpy as np
 
 # --------------------------------------------------------------------------------------------------
 # GPU kernel
 # --------------------------------------------------------------------------------------------------
 
 # spline coefficients, matching pytreegrav/kernel.py PotentialKernel
-_C = dict(a0=-2.8, a1=5.33333333333333333, a2=-9.6, a3=6.4, b0=-3.2, b1=0.0666666666666666666, b2=10.6666666666666666, b3=-16.0, b4=9.6, b5=-2.13333333333333333)
+_C = dict(
+    a0=-2.8,
+    a1=5.33333333333333333,
+    a2=-9.6,
+    a3=6.4,
+    b0=-3.2,
+    b1=0.0666666666666666666,
+    b2=10.6666666666666666,
+    b3=-16.0,
+    b4=9.6,
+    b5=-2.13333333333333333,
+)
 
 
 @mx.compile
@@ -139,6 +150,7 @@ def main():
     args = p.parse_args()
 
     from numba import get_num_threads
+
     from pytreegrav.bruteforce import Potential_bruteforce_parallel
     from pytreegrav.bruteforce_symmetric import Potential_bruteforce_symmetric
 

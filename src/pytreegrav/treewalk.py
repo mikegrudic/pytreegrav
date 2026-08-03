@@ -816,26 +816,32 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
         for i in range(N_rays):
             z_ray[i] = rays[i, 0] * dx[0] + rays[i, 1] * dx[1] + rays[i, 2] * dx[2]
         h_no = tree.Softenings[no]
-        h_no_inv = 1.0 / h_no
         h = h_no  # max(h_no,softening)
 
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
-            # add the particle's column if it's in the right direction
-            fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv  # assumes uniform sphere geometry
-            for i in range(N_rays):
-                r_proj = r2 - z_ray[i] * z_ray[i]
-                if r_proj < 0:
-                    continue
-                r_proj = sqrt(r2 - z_ray[i] * z_ray[i])
-                q = r_proj * h_no_inv
-                if r_proj < h_no:
-                    if r > h_no:  # not overlapping the target point - integrate the whole cell
-                        if z_ray[i] < 0:
-                            continue  # not on the ray
-                        columns[i] += fac * 2 * sqrt(1 - q * q)
-                    else:  # overlapping, so need to integrate only a portion of the cell - this case includes the self-shielding if the point is in the tree!
-                        dz = z_ray[i] * h_no_inv
-                        columns[i] += fac * (dz + sqrt(1 - q * q))
+            # add the particle's column if it's in the right direction.  Guarded on h_no > 0: a
+            # zero-radius particle has no geometric cross-section and so obscures nothing (the
+            # h -> 0 limit of the uniform-sphere column is a delta function, which any given ray
+            # misses).  This reciprocal used to be taken unconditionally *above* the branch, so a
+            # single zero radius raised ZeroDivisionError in the serial driver and produced silent
+            # NaNs in the parallel one.
+            if h_no > 0:
+                h_no_inv = 1.0 / h_no
+                fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv  # assumes uniform sphere geometry
+                for i in range(N_rays):
+                    r_proj = r2 - z_ray[i] * z_ray[i]
+                    if r_proj < 0:
+                        continue
+                    r_proj = sqrt(r2 - z_ray[i] * z_ray[i])
+                    q = r_proj * h_no_inv
+                    if r_proj < h_no:
+                        if r > h_no:  # not overlapping the target point - integrate the whole cell
+                            if z_ray[i] < 0:
+                                continue  # not on the ray
+                            columns[i] += fac * 2 * sqrt(1 - q * q)
+                        else:  # overlapping, so need to integrate only a portion of the cell - this case includes the self-shielding if the point is in the tree!
+                            dz = z_ray[i] * h_no_inv
+                            columns[i] += fac * (dz + sqrt(1 - q * q))
 
             no = tree.NextBranch[no]
 
@@ -894,22 +900,25 @@ def ColumnDensityWalk_singleray(pos, ray, tree, no=-1):
             no = tree.NextBranch[no]
             continue
         h_no = tree.Softenings[no]
-        h_no_inv = 1.0 / h_no
         h = h_no  # max(h_no,softening)
 
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
-            # add the particle's column if it's in the right direction
-            fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv
-            # assumes uniform sphere geometry
-            r_proj = sqrt(r2 - z_ray * z_ray)
-            q = r_proj * h_no_inv
-            if r_proj < h_no:
-                if r > h_no:  # not overlapping the target point - integrate the whole cell
-                    if z_ray > 0:
-                        column += fac * 2 * sqrt(1 - q * q)
-                else:  # overlapping, so need to integrate only a portion of the cell - this case includes the self-shielding if the point is in the tree!
-                    dz = z_ray * h_no_inv
-                    column += fac * (dz + sqrt(1 - q * q))
+            # add the particle's column if it's in the right direction.  See the note in
+            # ColumnDensityWalk_multiray on why the reciprocal is guarded and taken here rather
+            # than unconditionally above the branch.
+            if h_no > 0:
+                h_no_inv = 1.0 / h_no
+                fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv
+                # assumes uniform sphere geometry
+                r_proj = sqrt(r2 - z_ray * z_ray)
+                q = r_proj * h_no_inv
+                if r_proj < h_no:
+                    if r > h_no:  # not overlapping the target point - integrate the whole cell
+                        if z_ray > 0:
+                            column += fac * 2 * sqrt(1 - q * q)
+                    else:  # overlapping, so need to integrate only a portion of the cell - this case includes the self-shielding if the point is in the tree!
+                        dz = z_ray * h_no_inv
+                        column += fac * (dz + sqrt(1 - q * q))
             no = tree.NextBranch[no]
 
         else:  # we have a node, need to check if it intersects a ray
@@ -964,16 +973,17 @@ def ColumnDensityWalk_binned(pos, tree, theta=0.5, no=-1):
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
             # add the particle's column if it's in the right direction
             bin = angular_bin(dx)
-            if r2 > h * h:
-                col_bin = tree.Masses[no] / r2 / angular_bin_size
-            else:  # interpolate between full overlap case and no overlap
+            if r2 > h * h:  # no overlap: a point mass at distance sqrt(r2)
+                column[bin] += tree.Masses[no] / r2 / angular_bin_size
+            elif h > 0:  # interpolate between full overlap case and no overlap
                 col0 = tree.Masses[no] * (3 / (4 * np.pi * h * h))
                 fac = sqrt(r2) / h  # 0 to 1 when there is overlap
-                col_bin = col0 * fac * 2
                 col_isotropic = (1 - fac) * col0
                 for k in range(n_bins):
                     column[k] += col_isotropic
-            column[bin] += col_bin
+                column[bin] += col0 * fac * 2
+            # else h == 0 and r2 == 0: a point mass exactly at the target has no finite column, and
+            # the interpolation below would divide by zero.  Contribute nothing.
             no = tree.NextBranch[no]
         elif acceptance_criterion(
             sqrt(r2), h, tree.Sizes[no], tree.Deltas[no], theta

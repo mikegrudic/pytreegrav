@@ -119,6 +119,62 @@ through threadgroup memory so each source load is reused `tg` times, giving O(tg
 Kept because a correct-but-slow prototype is the easiest way to get a wrong answer to the *design*
 question. Any GPU number quoted for this library should say which of these two shapes produced it.
 
+## One kernel for Metal *and* NVIDIA: cheap, and mostly a red herring
+
+`bruteforce_gpu_portable.py` answers the portability question. MLX exposes `mx.fast.metal_kernel`
+and `mx.fast.cuda_kernel` with an **identical Python-side contract** — same constructor args
+(`name`/`input_names`/`output_names`/`source`/`header`), same call signature
+(`inputs`/`template`/`grid`/`threadgroup`/`output_shapes`/`output_dtypes`), and `grid` counted in
+*threads* rather than blocks on both. So the entire harness is shared and only the kernel dialect
+differs:
+
+| concept | Metal | CUDA |
+| --- | --- | --- |
+| global thread id | `thread_position_in_grid.x` | `blockIdx.x*blockDim.x + threadIdx.x` |
+| local thread id | `thread_position_in_threadgroup.x` | `threadIdx.x` |
+| shared declaration | `threadgroup float s[N];` | `__shared__ float s[N];` |
+| barrier | `threadgroup_barrier(mem_flags::mem_threadgroup)` | `__syncthreads()` |
+| rsqrt / sqrt / max | `metal::rsqrt` / `metal::sqrt` / `metal::max` | `rsqrtf` / `sqrtf` / `fmaxf` |
+
+Eight `#define`s plus a two-line preamble absorb all of it. Of 62 generated lines, 18 differ
+between the two backends and **16 of those are the shim itself** — the ~40-line physics inner loop
+is byte-identical. On Metal the portable version produces results **bit-identical** to the
+hand-written `bruteforce_metal.py` (rel err exactly 0.0) at 10.1×/14.3× over the CPU at
+N=32768/131072, i.e. the abstraction costs nothing measurable.
+
+**The CUDA path is written but unverified.** This machine has no NVIDIA GPU and no `nvcc`, and the
+installed MLX is a Metal-only build, so `mx.fast.cuda_kernel` exists in the API but cannot execute
+or even compile here. Treat that source as a strong first draft.
+
+Three caveats before believing "works well on both":
+
+- **The thread indices cannot be macro-hidden.** MLX builds the kernel signature by scanning the
+  `source` string for Metal attribute names, so if `thread_position_in_grid` appears only after
+  macro expansion, MLX never declares it and the Metal compiler dies on an undeclared identifier.
+  That is why the shim has a two-line preamble instead of two more `#define`s. Found the hard way.
+- **Portable source is not portable performance.** ~11% of FP32 peak on Apple came from one thread
+  per target with `tg=256`. NVIDIA will want register blocking — several targets per thread, the
+  i-loop unrolled — to approach peak, because its FMA-to-load ratio and register file are different.
+  Expect one source but two tuning constants, and do not quote an Apple-tuned number as an NVIDIA
+  result.
+- **Portability forces FP32.** Metal has no `float64`, so the common denominator across both targets
+  is single precision by construction. A portable kernel and an FP64 kernel are mutually exclusive
+  here; CUDA-only is the price of FP64.
+
+Alternatives considered for one-source-many-backend, none better for this: **Taichi** is the only
+genuine write-once option covering CUDA + Metal + Vulkan, but it is FP32-only on Metal and project
+momentum has visibly declined; **OpenCL** is the historically correct answer and runs on both, but
+Apple deprecated it in 2018 and froze it at 1.2; **wgpu/WebGPU** is genuinely portable and FP32-only
+but immature for HPC; **Triton** and **JAX Pallas** have no Metal backend at all. For a 40-line
+kernel, an 8-macro shim beats adopting any of them.
+
+**But note what this is portability *for*.** It is a brute-force kernel that loses to the shipped
+CPU tree above N≈50k. The result that matters is not "brute force is portable", it is that the
+harness and the shim are now proven, which de-risks the only port that could pay — the tree walk.
+The shim will hurt there in a way it does not here: a warp-synchronous walk needs vote/ballot
+intrinsics, and CUDA's `__ballot_sync`/`__any_sync` versus Metal's `simd_ballot`/`simd_any` are a
+real semantic seam, not a token substitution. That is the next thing to prototype if anyone cares.
+
 ## Notes and dead ends
 
 - **Hardware `rsqrt` is worth only ~1.25×**, not the order-of-magnitude the FP32-vs-FP64 argument
@@ -161,4 +217,5 @@ question. Any GPU number quoted for this library should say which of these two s
 | file | what it is |
 | --- | --- |
 | `bruteforce_metal.py` | **The useful outcome.** Hand-written Metal kernel via `mx.fast.metal_kernel`; one thread per target, sources staged through threadgroup memory. 116 Gpair/s. `--precise` prices the hardware rsqrt, `--tg` the threadgroup size. |
+| `bruteforce_gpu_portable.py` | Same kernel behind a Metal/CUDA shim: 8 `#define`s + a 2-line preamble, physics byte-identical. Metal path validated bit-identical to the above at no cost; **CUDA path unverified** (no NVIDIA hardware here). `--emit {metal,cuda}` prints either generated source. |
 | `bruteforce_mlx_arrayops.py` | Superseded first attempt: identical math as MLX array ops. Correct to 6e-08 and *slower than the CPU*. Kept for the 29× implementation-shape result. |
