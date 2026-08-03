@@ -214,6 +214,90 @@ real semantic seam, not a token substitution. That is the next thing to prototyp
 
 ## Files
 
+## The ray tracer: a better target than brute force
+
+This started as a spike here and **graduated into the package** as `pytreegrav.cuda`, wired up as
+`ColumnDensity(..., device="cuda")` and the `CudaColumnDensity` context, with an optional
+`pip install pytreegrav[cuda]` extra. The prototype file has been removed so it cannot drift from the
+shipped code; what stays here is the measurement record.
+
+Ray-traced column density is the workload that actually justifies a GPU: unlike gravity it has no
+FP64 story to lose (uniform spheres are already far cruder than FP32), and unlike brute force it does
+not lose to the shipped CPU tree.
+
+Three design points, all measured on the CPU side first:
+
+- **Not a port of `ColumnDensity_grouped`.** Grouping won ~3x on CPU by amortizing gathers across 16
+  targets, and paid for it by inflating the acceptance reach by the group extent -- leaf tests went
+  from 24 to 1389 per target. A warp gets the same amortization 32-fold for free: 32 Morton-adjacent
+  targets on one ray hold the same node index for nearly the whole descent, so the row fetch
+  broadcasts, while each lane still tests its exact ray. So the kernel is the *simpler* per-target
+  walk, and the port is smaller than it looks.
+- **The packed row is where the performance is.** Seven scattered float64 SoA gathers per node visit
+  become one 32 B contiguous read: `(NumNodes, 8) float32` plus an int32 link array. NumNodes = 1.5 N,
+  so the tree goes 84 MB -> 48 MB at N=1e6. Slots are overloaded between leaves and nodes, and 1/h,
+  1/h^2, the leaf prefactor and the squared node reach are all precomputed, leaving the kernel with
+  **no divisions and no sqrt on the node path**.
+- **No warp intrinsics.** One independent cursor per thread, so the `__ballot_sync` / `simd_ballot`
+  seam flagged above never arises. This is the port the shim work de-risked.
+
+### The float32 finding, which is the important one
+
+The first GPU run was **wrong by 2%** at N=20000, against 1.98e-06 for the same float32 rows walked in
+float64 arithmetic. Cause: the shipped walk gets the squared impact parameter as `r^2 - z^2`, which
+cancels catastrophically for a nearly radial ray -- relative error ~ `eps (r/b)^2`. In float64 that is
+a harmless 3.6e-12 (it is why `test_clustered_configuration` sits at 1e-9 rather than 1e-12). In
+float32 the same `(r/h)^2 ~ 2000` at N=2e4 gives `eps (r/h)^2 = 2.4e-04`, which the chord derivative
+then amplifies near the sphere edge.
+
+Computing `b = d - (d.n) n` and `|b|^2` instead fixes it: **2.00e-02 -> 3.27e-06**, a 6000x
+improvement, and the residual is now float32 *storage* error rather than arithmetic. That form was
+measured at +12.8% on the CPU earlier and rejected as not worth digits 12-16 of an extinction
+estimate. That judgement still holds for float64 -- but the well-conditioned form is a **prerequisite**
+for any float32 or GPU path, not an optimization. On a latency-bound kernel its ~9 extra flops are
+free.
+
+### Validation
+
+`--validate` reports both precisions, which separates two questions:
+
+| rows | N=2000 | N=20000 | what it measures |
+| --- | --- | --- | --- |
+| float64 | 2.72e-14 | 8.86e-14 | limited by the *reference* -- the shipped walk's own `r^2-z^2` conditioning |
+| float32 | 6.54e-07 | 1.98e-06 | what narrowing storage costs, on its own |
+| cuda float32 | 7.98e-07 | 3.27e-06 | storage + float32 arithmetic + the launch path |
+
+Zero-radius particles pack to a zeroed row and contribute nothing, matching the CPU walk; the packer
+raises rather than shipping `inf` if `M/h^2` overflows float32 (checked: fires on `h=1e-22`).
+
+### Results: RTX A6000 vs 32 Xeon Gold 6244 threads
+
+ccalin030, driver 580.142, numba 0.66.0 + numba-cuda 0.30.4, CC 8.6, 84 SMs. CPU column is the shipped
+`ColumnDensity(rays=6, parallel=True)` -- i.e. the grouped walk at `group_size=16` -- on the same node.
+All JIT paths warmed first; `build` and `pack+upload` are one-off per tree.
+
+| N | tree build | pack+upload | CPU 32t | CUDA | speedup | max rel |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1e5 | 17 ms | 15 ms | 328 ms | **28 ms** | **11.8x** | 9.6e-06 |
+| 1e6 | 160 ms | 179 ms | 7643 ms | **507 ms** | **15.1x** | 8.4e-06 |
+| 3e6 | 486 ms | 511 ms | 40659 ms | **2230 ms** | **18.2x** | 8.0e-06 |
+
+**Clears the 10x criterion**, and the margin grows with N -- there is more work to fill 84 SMs with,
+while the CPU is increasingly cache-limited (its cost goes as N^(4/3)). Note the CPU number at N=3e6
+is 41 s, which is the scaling this was meant to attack.
+
+Secondary measurements:
+
+- **`threads_x = 32` is best** -- 486 ms against 547 at 128, at N=1e6. One warp per block: no partly
+  divergent warps at block boundaries, and 187k blocks for the scheduler to balance over 84 SMs.
+- **Transfers are 2% of a call.** Kernel 554 ms vs 568 ms for the full call including target upload and
+  result download. The 60 MB tree upload (136 ms) is one-off, which is what the context object is for.
+- **Ray count scales linearly**: 92.6 / 102.6 / 104.1 / 108.3 ms per ray at 6 / 12 / 48 / 192 rays
+  (N=1e6). So healpix nside=4 is ~21 s on the GPU against ~250 s on the CPU.
+- Throughput is 9-12 M walks/s, roughly flat in ray count.
+
+## Files
+
 | file | what it is |
 | --- | --- |
 | `bruteforce_metal.py` | **The useful outcome.** Hand-written Metal kernel via `mx.fast.metal_kernel`; one thread per target, sources staged through threadgroup memory. 116 Gpair/s. `--precise` prices the hardware rsqrt, `--tg` the threadgroup size. |

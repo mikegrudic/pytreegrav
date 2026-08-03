@@ -903,6 +903,7 @@ def ColumnDensity(
     return_tree=False,
     parallel=False,
     group_size=16,
+    device="cpu",
 ):
     """Ray-traced or angle-binned column density calculation.
 
@@ -947,6 +948,11 @@ def ColumnDensity(
         of nodes, which halves the bin-to-bin scatter, so the answer shifts slightly and is more
         accurate. Ignored with randomize_rays or below COLUMN_GROUP_MIN_TARGETS targets; 1 gives the
         per-target walk.
+    device: str, optional
+        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and applies only
+        to the ray-traced path (rays given, randomize_rays off). It is float32, so expect ~1e-5
+        relative error rather than the CPU path's 1e-15, and it repacks and uploads the tree on
+        every call -- for repeated evaluation hold a pytreegrav.cuda.CudaColumnDensity instead.
 
     Returns
     -------
@@ -1002,10 +1008,18 @@ def ColumnDensity(
     if rays is not None:
         rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
 
+    if device not in ("cpu", "cuda"):
+        raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+    if device == "cuda":
+        if rays is None or randomize_rays:
+            raise ValueError("device='cuda' supports only the ray-traced path: pass rays, and not randomize_rays")
+        from .cuda import CudaColumnDensity  # imported lazily; numba-cuda is an optional extra
+
+        columns = CudaColumnDensity(tree)(pos_sorted, rays)
     # Grouping needs every target in a group to share the same ray directions, so randomize_rays --
     # which rotates the grid per target -- keeps the per-target walks.  Dispatched here rather than
     # inside ColumnDensity_tree: calling one parallel=True kernel from another serializes its prange.
-    if rays is not None and not randomize_rays and len(pos_sorted) >= COLUMN_GROUP_MIN_TARGETS:
+    elif rays is not None and not randomize_rays and len(pos_sorted) >= COLUMN_GROUP_MIN_TARGETS:
         walk = ColumnDensity_grouped_parallel if parallel else ColumnDensity_grouped
         columns = walk(pos_sorted, rays, tree, group_size)
     elif rays is None and len(pos_sorted) >= COLUMN_GROUP_MIN_TARGETS:
