@@ -42,16 +42,12 @@ def valueTestMethod(method):
 def warn_if_coincident_positions(tree, softening=None):
     """Warn if the build found particle positions coincident to floating-point precision.
 
-    Asks the tree rather than scanning the input, because the build already had to answer this
-    question exactly: it cannot subdivide coincident points forever, so it detects them either
-    by exhausting the Morton key (the radix build, which then buckets them) or by hitting equal
-    coordinates during insertion (the legacy build, which perturbs them apart). Reading the flag
-    it sets is free.
+    Asks the tree rather than scanning the input: the build cannot subdivide coincident points
+    forever, so it already detects them exactly, and reading its flag is free.
 
-    The scan this replaces cost 1083 ms of a 1985 ms build at N=1e7 -- np.unique, i.e. a full
-    sort, once per dimension -- and was wrong besides: it tested whether any single *coordinate*
-    repeated rather than any *position*, so any structured input (a lattice, a slab, anything on
-    a grid) was told its answer would be "singular or garbage" while every position was distinct.
+    The scan this replaces cost 1083 ms of a 1985 ms build at N=1e7 (np.unique per dimension) and was
+    wrong besides -- it tested whether any single *coordinate* repeated rather than any *position*, so
+    any lattice or grid was warned about while every position was in fact distinct.
     """
     if not tree.HasCoincidentPoints:
         return
@@ -199,11 +195,10 @@ def Potential(
 
     # figure out which method to use
     if method == "adaptive":
-        # Brute force stays competitive to larger N when it's threaded. 4000 is where the
-        # parallel curves cross on a 32-thread machine (Plummer, theta=0.7): at N=3447 brute
-        # force acceleration is 0.57 us/particle against the tree's 0.67, and by N=6092 it is
-        # 0.95 against 0.68. Potential crosses a little later, nearer 5500, so this favours
-        # acceleration -- the more common call, and the steeper curve to be on the wrong side of.
+        # Threaded brute force stays competitive to larger N. 4000 is where the parallel curves cross
+        # on 32 threads (Plummer, theta=0.7): at N=3447 brute-force accel is 0.57 us/particle against
+        # the tree's 0.67, by N=6092 it is 0.95 against 0.68. Potential crosses nearer 5500, so this
+        # favours acceleration -- the more common call, and the steeper curve to be wrong about.
         if len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
@@ -446,11 +441,7 @@ def Accel(
 
     # figure out which method to use
     if method == "adaptive":
-        # Brute force stays competitive to larger N when it's threaded. 4000 is where the
-        # parallel curves cross on a 32-thread machine (Plummer, theta=0.7): at N=3447 brute
-        # force acceleration is 0.57 us/particle against the tree's 0.67, and by N=6092 it is
-        # 0.95 against 0.68. Potential crosses a little later, nearer 5500, so this favours
-        # acceleration -- the more common call, and the steeper curve to be on the wrong side of.
+        # see the threshold note in Potential
         if len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
@@ -911,6 +902,7 @@ def ColumnDensity(
     theta=0.5,
     return_tree=False,
     parallel=False,
+    group_size=16,
 ):
     """Ray-traced or angle-binned column density calculation.
 
@@ -949,6 +941,12 @@ def ColumnDensity(
         Opening angle for the beam-traced angular bin estimator (default 0.5)
     return_tree: bool, optional
         return the tree used for future use (default False)
+    group_size: int, optional
+        Targets sharing one tree traversal (default 16, measured best from N=3e4 to 1e6). Amortizes
+        the descent. Bit-identical for the ray-traced path; for rays=None the group opens a superset
+        of nodes, which halves the bin-to-bin scatter, so the answer shifts slightly and is more
+        accurate. Ignored with randomize_rays or below COLUMN_GROUP_MIN_TARGETS targets; 1 gives the
+        per-target walk.
 
     Returns
     -------
@@ -958,9 +956,8 @@ def ColumnDensity(
     """
 
     if np.any(np.asarray(radii) <= 0):
-        # These particles are point-like, so they have no geometric cross-section and obscure
-        # nothing.  That is the right h -> 0 limit, but it silently drops their mass from the
-        # column, so say so rather than letting it pass unnoticed.
+        # Point-like, so no cross-section and nothing obscured -- the right h -> 0 limit, but it
+        # drops their mass from the column, which should not pass unnoticed.
         warnings.warn(
             "Some particle radii are <= 0; these particles are point-like and contribute no column "
             "density. Supply a nonzero radius if their mass should be included."
@@ -976,9 +973,8 @@ def ColumnDensity(
         # the tree was just built from pos, so its walk order already is pos's Morton order
         idx = tree.TreewalkIndices
     else:
-        # A supplied tree may hold a different set of particles than the targets, so its
-        # TreewalkIndices do not index pos.  Morton-sort the targets on their own instead, as
-        # PotentialTarget/AccelTarget do -- the ordering only buys locality, never correctness.
+        # A supplied tree may hold different particles than the targets, so its TreewalkIndices do
+        # not index pos.  Sort the targets on their own, as PotentialTarget/AccelTarget do.
         idx = _morton_order(pos)
     pos_sorted = pos[idx]
 
@@ -1006,7 +1002,18 @@ def ColumnDensity(
     if rays is not None:
         rays /= np.sqrt((rays * rays).sum(1))[:, None]  # normalize the ray vectors
 
-    if parallel:
+    # Grouping needs every target in a group to share the same ray directions, so randomize_rays --
+    # which rotates the grid per target -- keeps the per-target walks.  Dispatched here rather than
+    # inside ColumnDensity_tree: calling one parallel=True kernel from another serializes its prange.
+    if rays is not None and not randomize_rays and len(pos_sorted) >= COLUMN_GROUP_MIN_TARGETS:
+        walk = ColumnDensity_grouped_parallel if parallel else ColumnDensity_grouped
+        columns = walk(pos_sorted, rays, tree, group_size)
+    elif rays is None and len(pos_sorted) >= COLUMN_GROUP_MIN_TARGETS:
+        # Not merely faster: opening a superset of nodes splits each node's mass across the sky bins
+        # more finely, roughly halving the bin-to-bin scatter. group_size=1 recovers the old result.
+        walk = ColumnDensityBinned_grouped_parallel if parallel else ColumnDensityBinned_grouped
+        columns = walk(pos_sorted, tree, theta, group_size)
+    elif parallel:
         columns = ColumnDensity_tree_parallel(pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta)
     else:
         columns = ColumnDensity_tree(pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta)

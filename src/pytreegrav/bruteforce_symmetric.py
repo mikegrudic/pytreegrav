@@ -1,32 +1,26 @@
 """Symmetry-exploiting parallel brute-force kernels.
 
-The parallel routines in bruteforce.py give each thread one target particle i and only ever
-write potential[i] / accel[i], so they must evaluate all N^2 pairs -- twice the work of the
-serial upper-triangular loop.
+bruteforce.py's parallel routines give each thread one target i and only write potential[i] /
+accel[i], so they evaluate all N^2 pairs -- twice the serial upper-triangular work.
 
-Here each thread instead takes an interleaved subset of the upper-triangular *rows* (row i
-covers j = i+1 .. N-1) and accumulates into its own private buffer, so both sides of every
-interaction can be written without a race; the buffers are reduced at the end.  Rows are
-dealt round-robin rather than in contiguous blocks because row i holds N-1-i interactions,
-so interleaving balances the load with no explicit partitioning.
+Here each thread takes an interleaved subset of the upper-triangular *rows* (row i covers
+j = i+1 .. N-1) and accumulates into a private buffer, so both sides of every interaction can be
+written without a race; the buffers are reduced at the end.  Rows are dealt round-robin because row i
+holds N-1-i interactions, so interleaving balances the load with no explicit partitioning.
 
-Cost: nthreads*N doubles of scratch for the potential, 3*nthreads*N for the accel.  That is
-the price of the 2x flop saving -- at N=1e5 on 16 threads it's 13/38 MB, which is fine, but
-it does not scale forever (N^2 brute force doesn't either).
+Cost: nthreads*N doubles of scratch (3x for accel) -- 13/38 MB at N=1e5 on 16 threads.
 
-An earlier version blocked the interaction matrix into tiles and handed threads (I,J) tile
-pairs.  Benchmarked against this row decomposition with a byte-identical inner kernel, the
-blocking was worth between -14% (2x Xeon 6244, 32t) and +9% (M-series, 16t, N>=40000): no
-reliable gain, in exchange for a pair list growing as ntile^2 (19.6 MB at N=1e5) and a tile
--size knob.  The speedup here comes from the symmetry, the private accumulators that make
-the symmetry safe under threading, and holding the i-side accumulators in registers -- not
-from cache blocking.  The inner loop is scalar and divide-bound (LLVM refuses to vectorize
-any loop carrying an fdiv, on both x86 and ARM), which leaves ample latency slack to cover
-memory access, so there is little for blocking to recover.
+An earlier version tiled the interaction matrix and handed threads (I,J) tile pairs.  With a
+byte-identical inner kernel it was worth between -14% (2x Xeon 6244, 32t) and +9% (M-series, 16t,
+N>=40000): no reliable gain, for a pair list growing as ntile^2 (19.6 MB at N=1e5) plus a tile-size
+knob.  The win here is the symmetry, the private accumulators that make it thread-safe, and holding
+the i-side accumulators in registers -- not cache blocking.  The inner loop is scalar and divide-bound
+(LLVM refuses to vectorize any loop carrying an fdiv, on x86 and ARM alike), so there is ample latency
+slack to cover memory access and little for blocking to recover.
 
-Below SYMMETRIC_NMIN this loses to the untiled kernels anyway -- it runs two parallel
-regions to their one, and a prange costs a full thread-team barrier however few iterations
-it has -- so the frontend keeps small problems on bruteforce.py.
+Below SYMMETRIC_NMIN this loses anyway -- two parallel regions to their one, and a prange costs a full
+thread-team barrier however few iterations it has -- so the frontend keeps small problems on
+bruteforce.py.
 """
 
 import numpy as np

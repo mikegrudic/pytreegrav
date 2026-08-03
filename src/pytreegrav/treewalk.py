@@ -6,24 +6,46 @@ from .misc import *
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-# Ray count above which ColumnDensity_tree stops using the bundled multi-ray walk and issues one
-# single-ray walk per direction instead.  ColumnDensityWalk_multiray traverses once for the whole
-# bundle but opens the union of every ray's node set and then evaluates each accepted element
-# against all N_rays rays, so it costs O(N_rays^2) where N_rays independent walks cost O(N_rays).
-# It wins only while the bundle is small enough for traversal amortization to dominate.
-# Measured on an M3 Max at N=30000, multiray / (N_rays x singleray):
-#     N_rays =  12 -> 0.73x (multiray faster)
-#     N_rays =  48 -> 1.21x
-#     N_rays = 192 -> 2.07x (multiray much slower)
-# so the crossover sits near 24.  Both walks are exact and agree to zero disagreement, so this
-# threshold only trades speed, never accuracy.
+# Above this ray count ColumnDensity_tree drops the bundled multi-ray walk for one single-ray walk
+# per direction.  ColumnDensityWalk_multiray traverses once but opens the union of every ray's node
+# set and tests each accepted element against all rays, so it costs O(N_rays^2) vs O(N_rays).  Both
+# are exact, so this only trades speed.  Measured multiray/(N_rays x singleray) at N=30000:
+# 0.73x at 12 rays, 1.21x at 48, 2.07x at 192 -- crossover near 24.
 MULTIRAY_MAX_RAYS = 24
+
+# Below this target count ColumnDensity keeps the per-target walks.  Grouping pads the acceptance
+# reach by the group's spatial extent, so it needs Morton-adjacent targets to actually be close; a
+# sparse target set gives group extents approaching the cloud size and a beam that opens everything.
+COLUMN_GROUP_MIN_TARGETS = 1000
 
 
 @njit(fastmath=True)
 def acceptance_criterion(r: float, h: float, size: float, delta: float, theta: float) -> bool:
     """Criterion for accepting the multipole approximation for summing the contribution of a node"""
     return r > max(size / theta + delta, h + size * 0.6 + delta)
+
+
+@njit(inline="always")
+def subtree_end(tree, no):
+    """Index at which a walk started at ``no`` must stop to stay inside no's subtree.
+
+    Depth-first order resumes at ``NextBranch[no]`` once the subtree is done; without this bound the
+    chain leads back out and keeps going.  -1 at the root, so the default whole-tree walk is unaffected.
+    """
+    return tree.NextBranch[no]
+
+
+@njit(int64(float64, float64, float64), inline="always", fastmath=True)
+def angular_bin_scalar(dx0, dx1, dx2):
+    """Angular bin of a separation, taken as scalars so grouped kernels can call it in their target
+    loop without materializing a length-3 array -- the allocation that made grouped_treewalk's
+    quadrupole kernel anti-scale."""
+    if fabs(dx0) > fabs(dx1) and fabs(dx0) > fabs(dx2):
+        return 0 if dx0 > 0 else 1
+    elif fabs(dx1) > fabs(dx2):
+        return 2 if dx1 > 0 else 3
+    else:
+        return 4 if dx2 > 0 else 5
 
 
 @njit([int64(float64[:])], fastmath=True)
@@ -64,17 +86,12 @@ def PotentialWalk(pos, tree, softening=0, no=-1, theta=0.7):
     tree - octree object storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
+    no - root of the subtree to sum over; defaults to the whole tree. Summing over a node's children reproduces that node's own result, e.g. for parallelization
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
     phi = 0
     dx = np.empty(3, dtype=np.float64)
 
@@ -112,17 +129,12 @@ def PotentialWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):
     tree - octree object storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
+    no - root of the subtree to sum over; defaults to the whole tree. Summing over a node's children reproduces that node's own result, e.g. for parallelization
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
     phi = 0
     dx = np.empty(3, dtype=np.float64)
 
@@ -164,17 +176,12 @@ def AccelWalk(pos, tree, softening=0, no=-1, theta=0.7):
     tree - octree instance storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
+    no - root of the subtree to sum over; defaults to the whole tree. Summing over a node's children reproduces that node's own result, e.g. for parallelization
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
     g = zeros(3, dtype=np.float64)
     dx = np.empty(3, dtype=np.float64)
 
@@ -221,17 +228,12 @@ def AccelWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):  # ,include_self_p
     tree - octree instance storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
+    no - root of the subtree to sum over; defaults to the whole tree. Summing over a node's children reproduces that node's own result, e.g. for parallelization
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
     g = zeros(3, dtype=np.float64)
     dx = np.empty(3, dtype=np.float64)
 
@@ -406,12 +408,7 @@ def DensityCorrWalk(
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
 
     Nbins = rbins.shape[0] - 1
     mbin = zeros(Nbins)
@@ -551,12 +548,7 @@ def VelocityCorrWalk(
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
 
     Nbins = rbins.shape[0] - 1
     binsums = zeros(Nbins)
@@ -710,12 +702,7 @@ def VelocityStructWalk(
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
 
     Nbins = rbins.shape[0] - 1
     binsums = zeros(Nbins)
@@ -850,16 +837,11 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
     columns - (N_rays,) array of column densities along directions given by rays
 
     Keyword arguments:
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
+    no - root of the subtree to sum over; defaults to the whole tree. Summing over a node's children reproduces that node's own result, e.g. for parallelization
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
 
     N_rays = rays.shape[0]
     columns = np.zeros(N_rays)
@@ -880,12 +862,9 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
         h = h_no  # max(h_no,softening)
 
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
-            # add the particle's column if it's in the right direction.  Guarded on h_no > 0: a
-            # zero-radius particle has no geometric cross-section and so obscures nothing (the
-            # h -> 0 limit of the uniform-sphere column is a delta function, which any given ray
-            # misses).  This reciprocal used to be taken unconditionally *above* the branch, so a
-            # single zero radius raised ZeroDivisionError in the serial driver and produced silent
-            # NaNs in the parallel one.
+            # A zero-radius particle has no cross-section, so it obscures nothing.  Guard the
+            # reciprocal here, not above the branch: taking it for every visited element made a
+            # single zero radius raise ZeroDivisionError serially and yield silent NaNs in parallel.
             if h_no > 0:
                 h_no_inv = 1.0 / h_no
                 fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv  # assumes uniform sphere geometry
@@ -940,16 +919,11 @@ def ColumnDensityWalk_singleray(pos, ray, tree, no=-1):
     columns - (N_rays,) array of column densities along directions given by rays
 
     Keyword arguments:
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
+    no - root of the subtree to sum over; defaults to the whole tree. Summing over a node's children reproduces that node's own result, e.g. for parallelization
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
 
     column = 0
     dx = np.empty(3, dtype=np.float64)
@@ -970,10 +944,7 @@ def ColumnDensityWalk_singleray(pos, ray, tree, no=-1):
         h = h_no  # max(h_no,softening)
 
         if no < tree.NumParticles:  # if we're looking at a leaf/particle
-            # add the particle's column if it's in the right direction.  See the note in
-            # ColumnDensityWalk_multiray on why the reciprocal is guarded and taken here rather
-            # than unconditionally above the branch.
-            if h_no > 0:
+            if h_no > 0:  # zero radius -> no cross-section; see ColumnDensityWalk_multiray
                 h_no_inv = 1.0 / h_no
                 fac = fac_density * tree.Masses[no] * h_no_inv * h_no_inv
                 # assumes uniform sphere geometry
@@ -1019,16 +990,11 @@ def ColumnDensityWalk_binned(pos, tree, theta=0.5, no=-1):
     columns - shape (6,) array of average column densities in the 6 equal bins on the sphere
 
     Keyword arguments:
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
+    no - root of the subtree to sum over; defaults to the whole tree. Summing over a node's children reproduces that node's own result, e.g. for parallelization
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
-    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
-    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
-    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
-    # cally meaningless -- it returned the same answer as starting from the root.  For the root
-    # NextBranch is -1, so the default path is unchanged.
-    stop = tree.NextBranch[no]
+    stop = subtree_end(tree, no)
 
     n_bins = 6
     column = np.zeros(n_bins)
@@ -1084,8 +1050,11 @@ def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=
 
     theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
     """
-    # scoped, not global -- see the note in PotentialTarget_tree
-    with parallel_chunksize(10000):
+    # Scoped, not global -- see the note in PotentialTarget_tree.  64 rather than 10000: a coarse
+    # chunk collapses concurrency.  At N=3e5 with 12 rays both spend ~100 s of CPU, but chunksize
+    # 10000 takes 43.6 s of wall against 10.5 s (cpu/wall 2.10 vs 9.05 on 16 threads).  Anything from
+    # 8 to 2048 is equally good and bit-identical, so this only ever costs scheduling.
+    with parallel_chunksize(64):
         if rays is None:  # do angular-binned column density
             result = empty((pos_target.shape[0], 6))
             for i in prange(pos_target.shape[0]):
@@ -1119,3 +1088,232 @@ def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=
 
 ColumnDensity_tree_parallel = njit(ColumnDensity_tree, fastmath=True, parallel=True)
 ColumnDensity_tree = njit(ColumnDensity_tree, fastmath=True)
+
+
+def ColumnDensity_grouped(pos_target, rays, tree, group_size=16):
+    """Ray-traced column density, traversing the tree once per (group of targets, ray direction).
+
+    The amortization grouped_treewalk applies to gravity.  Morton-order targets make each group
+    spatially compact, so for a fixed direction their rays are parallel lines separated by at most the
+    group's extent; inflating the acceptance reach by the group bbox half-diagonal ``E`` therefore
+    opens a superset of what any individual ray would.  Accepted leaves then loop over the group with
+    the leaf's mass and reciprocal radius hoisted into registers, trading G gather-driven traversals
+    for one traversal plus G register-only tests.
+
+    Output is bit-identical at every group_size -- the superset only adds leaves contributing nothing,
+    and each target accumulates in the same depth-first order.  Measured against group_size=1 at
+    12 rays: 2.80x at N=3e5, 2.5x at N=3e4; group_size=16 best at both.
+
+    Not usable with randomize_rays, which gives each target its own rotated grid; grouping needs a
+    shared one.
+
+    Arguments:
+    pos_target -- shape (N,3) target positions, in Morton order for grouping to be effective
+    rays -- shape (N_rays,3) array of unit ray direction vectors
+    tree -- Octree holding the source mass distribution
+    group_size -- targets per traversal (default 16); 1 reproduces the per-target walk
+
+    Returns:
+    shape (N, N_rays) array of column densities, in the same order as pos_target
+    """
+    N = pos_target.shape[0]
+    n_rays = rays.shape[0]
+    out = np.zeros((N, n_rays))
+    ngroups = (N + group_size - 1) // group_size
+    fac_density = 3 / (4 * np.pi)
+    # 4, not ColumnDensity_tree's 64: there are group_size times fewer groups than targets, so keeping
+    # chunks-per-thread up needs a smaller chunk.  At N=3e4, group_size=16, chunksize 64 leaves 29
+    # chunks for 16 threads and hits the same concurrency cliff -- 758 ms against 144 ms at 4.
+    with parallel_chunksize(4):
+        for gi in prange(ngroups):
+            a = gi * group_size
+            b = min(a + group_size, N)
+            # group bounding box -> centre, and half-diagonal as a conservative angular padding
+            bmin0 = bmax0 = pos_target[a, 0]
+            bmin1 = bmax1 = pos_target[a, 1]
+            bmin2 = bmax2 = pos_target[a, 2]
+            for t in range(a + 1, b):
+                if pos_target[t, 0] < bmin0:
+                    bmin0 = pos_target[t, 0]
+                elif pos_target[t, 0] > bmax0:
+                    bmax0 = pos_target[t, 0]
+                if pos_target[t, 1] < bmin1:
+                    bmin1 = pos_target[t, 1]
+                elif pos_target[t, 1] > bmax1:
+                    bmax1 = pos_target[t, 1]
+                if pos_target[t, 2] < bmin2:
+                    bmin2 = pos_target[t, 2]
+                elif pos_target[t, 2] > bmax2:
+                    bmax2 = pos_target[t, 2]
+            cx = 0.5 * (bmin0 + bmax0)
+            cy = 0.5 * (bmin1 + bmax1)
+            cz = 0.5 * (bmin2 + bmax2)
+            ex = 0.5 * (bmax0 - bmin0)
+            ey = 0.5 * (bmax1 - bmin1)
+            ez = 0.5 * (bmax2 - bmin2)
+            E = sqrt(ex * ex + ey * ey + ez * ez)
+
+            for i in range(n_rays):
+                rx = rays[i, 0]
+                ry = rays[i, 1]
+                rz = rays[i, 2]
+                no = tree.NumParticles
+                stop = tree.NextBranch[no]
+                while no > -1 and no != stop:
+                    gx = tree.Coordinates[no, 0]
+                    gy = tree.Coordinates[no, 1]
+                    gz = tree.Coordinates[no, 2]
+                    dx = gx - cx
+                    dy = gy - cy
+                    dz = gz - cz
+                    r2 = dx * dx + dy * dy + dz * dz
+                    z = rx * dx + ry * dy + rz * dz
+                    rp2 = r2 - z * z
+                    h_no = tree.Softenings[no]
+                    if no < tree.NumParticles:  # leaf/particle
+                        reach = h_no + E
+                        # h_no > 0 first: cheapest reject, and zero radius contributes nothing
+                        if h_no > 0 and (r2 < reach * reach or (z + E >= 0.0 and rp2 < reach * reach)):
+                            h_inv = 1.0 / h_no  # hoisted: keeps the target loop allocation-free
+                            fac = fac_density * tree.Masses[no] * h_inv * h_inv
+                            hh = h_no * h_no
+                            for t in range(a, b):
+                                ddx = gx - pos_target[t, 0]
+                                ddy = gy - pos_target[t, 1]
+                                ddz = gz - pos_target[t, 2]
+                                rr2 = ddx * ddx + ddy * ddy + ddz * ddz
+                                zz = rx * ddx + ry * ddy + rz * ddz
+                                pp2 = rr2 - zz * zz
+                                if pp2 < 0:
+                                    continue
+                                if pp2 < hh:
+                                    q = sqrt(pp2) * h_inv
+                                    chord = sqrt(1 - q * q)
+                                    if rr2 > hh:  # target outside the sphere: whole chord
+                                        if zz > 0:  # and the sphere is ahead of the target
+                                            out[t, i] += fac * 2 * chord
+                                    else:  # target inside: only the forward half-chord
+                                        out[t, i] += fac * (zz * h_inv + chord)
+                        no = tree.NextBranch[no]
+                    else:  # node: open it if it could intersect any of the group's rays
+                        reach = h_no + tree.Sizes[no] * 0.8660254037844386 + tree.Deltas[no] + E
+                        if r2 < reach * reach or (z + E >= 0.0 and rp2 < reach * reach):
+                            no = tree.FirstSubnode[no]
+                        else:
+                            no = tree.NextBranch[no]
+    return out
+
+
+ColumnDensity_grouped_parallel = njit(ColumnDensity_grouped, fastmath=True, parallel=True)
+ColumnDensity_grouped = njit(ColumnDensity_grouped, fastmath=True)
+
+
+def ColumnDensityBinned_grouped(pos_target, tree, theta=0.5, group_size=16):
+    """Angular-binned (rays=None) column density, one traversal per group of Morton-adjacent targets.
+
+    Structurally grouped_treewalk's gravity walk: acceptance uses ``r_min``, the nearest distance from
+    the node to the group's bounding box (0 if inside).  That is at most any member's own distance, so
+    the group opens a superset of what any individual target would -- conservative.
+
+    Unlike the ray-traced grouped walk this is **not** bit-identical, because nodes themselves
+    contribute: a finer node set splits each node's mass across the sky bins differently.  That is an
+    improvement.  On the glass sphere, whose central column is exactly rho*R in every direction, the
+    mean/truth goes 0.9401 -> 0.9426 and the bin spread 0.792-1.095 -> 0.870-1.046 from per-target to
+    group_size=16 -- the dominant error nearly halved, alongside a 2.3x speedup.  group_size=1 makes
+    r_min exact and recovers the per-target result.
+
+    Arguments:
+    pos_target -- shape (N,3) target positions, in Morton order for grouping to be effective
+    tree -- Octree holding the source mass distribution
+    theta -- opening angle (default 0.5)
+    group_size -- targets per traversal (default 16); 1 reproduces the per-target walk
+
+    Returns:
+    shape (N, 6) array of mean column density per equal-area sky bin, in the same order as pos_target
+    """
+    N = pos_target.shape[0]
+    n_bins = 6
+    out = np.zeros((N, n_bins))
+    angular_bin_size = (4 * np.pi) / n_bins
+    ngroups = (N + group_size - 1) // group_size
+    with parallel_chunksize(4):  # see the chunksize note in ColumnDensity_grouped
+        for gi in prange(ngroups):
+            a = gi * group_size
+            b = min(a + group_size, N)
+            bmin0 = bmax0 = pos_target[a, 0]
+            bmin1 = bmax1 = pos_target[a, 1]
+            bmin2 = bmax2 = pos_target[a, 2]
+            for t in range(a + 1, b):
+                if pos_target[t, 0] < bmin0:
+                    bmin0 = pos_target[t, 0]
+                elif pos_target[t, 0] > bmax0:
+                    bmax0 = pos_target[t, 0]
+                if pos_target[t, 1] < bmin1:
+                    bmin1 = pos_target[t, 1]
+                elif pos_target[t, 1] > bmax1:
+                    bmax1 = pos_target[t, 1]
+                if pos_target[t, 2] < bmin2:
+                    bmin2 = pos_target[t, 2]
+                elif pos_target[t, 2] > bmax2:
+                    bmax2 = pos_target[t, 2]
+
+            no = tree.NumParticles
+            stop = tree.NextBranch[no]
+            while no > -1 and no != stop:
+                cx = tree.Coordinates[no, 0]
+                cy = tree.Coordinates[no, 1]
+                cz = tree.Coordinates[no, 2]
+                h_no = tree.Softenings[no]
+                M = tree.Masses[no]
+                if no < tree.NumParticles:  # leaf: contributes to every target exactly, no criterion
+                    hh = h_no * h_no
+                    for t in range(a, b):
+                        d0 = cx - pos_target[t, 0]
+                        d1 = cy - pos_target[t, 1]
+                        d2 = cz - pos_target[t, 2]
+                        r2 = d0 * d0 + d1 * d1 + d2 * d2
+                        bin = angular_bin_scalar(d0, d1, d2)
+                        if r2 > hh:  # no overlap: a point mass at distance sqrt(r2)
+                            out[t, bin] += M / r2 / angular_bin_size
+                        elif h_no > 0:  # overlapping: blend the isotropic and directed limits
+                            col0 = M * (3 / (4 * np.pi * hh))
+                            fac = sqrt(r2) / h_no
+                            col_isotropic = (1 - fac) * col0
+                            for k in range(n_bins):
+                                out[t, k] += col_isotropic
+                            out[t, bin] += col0 * fac * 2
+                        # else h_no == 0 and r2 == 0: point mass at the target, no finite column
+                    no = tree.NextBranch[no]
+                else:
+                    # nearest distance from the node to the group's bounding box, 0 if inside
+                    dxm = 0.0
+                    if cx < bmin0:
+                        dxm = bmin0 - cx
+                    elif cx > bmax0:
+                        dxm = cx - bmax0
+                    dym = 0.0
+                    if cy < bmin1:
+                        dym = bmin1 - cy
+                    elif cy > bmax1:
+                        dym = cy - bmax1
+                    dzm = 0.0
+                    if cz < bmin2:
+                        dzm = bmin2 - cz
+                    elif cz > bmax2:
+                        dzm = cz - bmax2
+                    r_min = sqrt(dxm * dxm + dym * dym + dzm * dzm)
+                    if acceptance_criterion(r_min, h_no, tree.Sizes[no], tree.Deltas[no], theta):
+                        for t in range(a, b):
+                            d0 = cx - pos_target[t, 0]
+                            d1 = cy - pos_target[t, 1]
+                            d2 = cz - pos_target[t, 2]
+                            r2 = d0 * d0 + d1 * d1 + d2 * d2
+                            out[t, angular_bin_scalar(d0, d1, d2)] += M / r2 / angular_bin_size
+                        no = tree.NextBranch[no]
+                    else:
+                        no = tree.FirstSubnode[no]
+    return out
+
+
+ColumnDensityBinned_grouped_parallel = njit(ColumnDensityBinned_grouped, fastmath=True, parallel=True)
+ColumnDensityBinned_grouped = njit(ColumnDensityBinned_grouped, fastmath=True)

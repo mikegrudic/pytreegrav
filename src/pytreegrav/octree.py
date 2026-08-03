@@ -373,19 +373,18 @@ def ComputeMomentsLinked(tree, no):
 # ---------------------------------------------------------------------------------------------
 # Parallel split
 #
-# The node split is the largest single phase of the build, and it is naturally divide-and-conquer:
-# once the top of the tree is laid out, each sub-octant owns a disjoint, contiguous range of the
-# Morton-sorted particles and can be built without looking at any other. What stops a naive prange
-# is node-index allocation -- the serial split hands out indices from one running counter.
+# The largest single phase of the build, and naturally divide-and-conquer: once the top of the tree
+# is laid out, each sub-octant owns a disjoint contiguous range of the Morton-sorted particles. What
+# stops a naive prange is node-index allocation -- the serial split hands out indices from one counter.
 #
-# So: descend serially to a frontier of subtrees, count each subtree's nodes exactly (a parallel
-# pass that mirrors the split with every store removed), prefix-sum those counts into disjoint
-# contiguous blocks, and let each worker build into its own block. Contiguous blocks also keep a
-# worker's node writes in its own region instead of interleaving with everyone else's.
+# So: descend serially to a frontier of subtrees, count each subtree's nodes exactly (a parallel pass
+# mirroring the split with every store removed), prefix-sum the counts into disjoint contiguous
+# blocks, and let each worker build into its own. Contiguous blocks also keep a worker's node writes
+# out of everyone else's region.
 #
-# Groups that exhaust the Morton key are deferred rather than built: resolving them means
-# RekeySlice, which permutes particle data and whose node count cannot be known without doing the
-# work, so they cannot be budgeted for. They are finished by the ordinary serial loop afterwards.
+# Groups that exhaust the Morton key are deferred, not built: resolving them means RekeySlice, whose
+# node count cannot be known without doing the work, so it cannot be budgeted. The serial loop
+# finishes them afterwards.
 # ---------------------------------------------------------------------------------------------
 
 # Below this N the frontier descent and counting pass cost more than the split they save. Measured
@@ -809,15 +808,11 @@ class Octree:
                                 same_coord = False
                         if same_coord:
                             self.HasCoincidentPoints = True
-                            # Nudge the duplicate off its twin. This must be ADDITIVE: the old
-                            # `Coordinates[i] *= exp(...)` cannot move a coordinate that is
-                            # exactly 0.0, so two particles at the origin re-tested equal every
-                            # time and spun here forever.
-                            #
-                            # A zero component is stepped relative to the root cube rather than
-                            # to itself. Stepping it by its own ULP (5e-324) would technically
-                            # separate them, but the tree would then need ~1000 levels to
-                            # resolve the gap instead of the ~52 a relative nudge costs.
+                            # Nudge the duplicate off its twin, ADDITIVELY: the old
+                            # `Coordinates[i] *= exp(...)` cannot move an exactly-0.0 coordinate, so
+                            # two particles at the origin re-tested equal forever. A zero component
+                            # steps relative to the root cube, not its own ULP (5e-324) -- that would
+                            # separate them but need ~1000 tree levels instead of ~52.
                             box = self.Sizes[self.NumParticles]
                             if box == 0.0:
                                 box = 1.0  # every point identical; the answer is garbage anyway

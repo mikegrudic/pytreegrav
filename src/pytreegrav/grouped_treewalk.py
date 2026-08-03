@@ -1,23 +1,18 @@
 """Grouped/vectorized Barnes-Hut treewalk: one traversal per spatially-compact group of targets.
 
-Instead of walking the tree once per target particle, we walk it once per *group* of consecutive
-(Morton-sorted, hence spatially compact) targets.  Each group traverses the tree once; at every
-accepted element the per-kernel physics inner-loops over the group's targets.  The speedup comes
-from *amortizing the traversal*: the branchy, pointer-chasing tree descent (a descent step costs
-~3x a force-pair evaluation) runs ~group_size times fewer, which more than pays for the extra
-force-pair work that grouping incurs.  (It is NOT from SIMD/vectorization - the inner loop's
-branches and ForceKernel call keep it scalar; toggling fastmath changes runtime by only ~2%.)
+One traversal per *group* of consecutive (Morton-sorted, hence spatially compact) targets rather than
+per target; at every accepted element the kernel inner-loops over the group.  The win is *amortizing
+the traversal*: the branchy pointer-chasing descent (a step costs ~3x a force-pair evaluation) runs
+~group_size times fewer, which more than pays for the extra force-pairs grouping incurs.  It is NOT
+SIMD -- the inner loop's branches and ForceKernel call keep it scalar, and fastmath moves runtime ~2%.
 
-Group acceptance uses the group bounding box's nearest distance (r_min) and the group's max
-softening, which is strictly more conservative than the per-particle criterion, so the result opens
-a superset of nodes: accuracy is equal-or-better than the per-particle walk for a given theta (at
-the cost of more force-pairs - the trade grouping makes).  group_size=1 reproduces the per-particle
-walk; the optimum (~8) is where traversal amortization saturates before interaction-list bloat
-dominates.
+Acceptance uses the group bbox's nearest distance (r_min) and max softening, strictly more
+conservative than per-particle, so a superset of nodes opens: accuracy is equal-or-better for a given
+theta, at the cost of more force-pairs.  group_size=1 reproduces the per-particle walk; the optimum
+(~8) is where amortization saturates before interaction-list bloat dominates.
 
-The traversal core is shared across all lenses; only the small ``inline='always'`` per-interaction
-kernel varies (monopole/quadrupole x potential/acceleration).  numba specializes and inlines the
-kernel, so the shared core costs only a few percent over a hand-fused walk.
+The traversal core is shared; only the small ``inline='always'`` per-interaction kernel varies
+(monopole/quadrupole x potential/acceleration), and numba inlines it, so sharing costs a few percent.
 """
 
 import numpy as np
@@ -88,13 +83,11 @@ def _pot_mono(no, a, b, pos, soft, tree, acc):
 def _accel_quad(no, a, b, pos, soft, tree, acc):
     """Add source ``no``'s acceleration to every target in [a, b), with the quadrupole term for nodes.
 
-    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes
-    add the quadrupole correction.
+    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole.
 
-    The quadrupole components and the separation vector are held in scalars.  Taking a
-    ``tree.Quadrupoles[no]`` view or an ``np.empty(3)`` inside the target loop costs an NRT
-    allocation per target, and the resulting allocator contention made this kernel *anti-scale*:
-    slower on 8 threads than on 1, and ~30x the monopole cost at 32 threads.
+    Components and the separation vector are held in scalars: a ``tree.Quadrupoles[no]`` view or an
+    ``np.empty(3)`` inside the target loop costs one NRT allocation per target, and the allocator
+    contention made this kernel *anti-scale* -- slower on 8 threads than 1, ~30x monopole cost at 32.
     """
     cx = tree.Coordinates[no, 0]
     cy = tree.Coordinates[no, 1]

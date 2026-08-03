@@ -1,22 +1,17 @@
 """Tests for the column-density estimators.
 
-The ray-traced walks are *exact*, not approximate: a node is opened whenever its bounding sphere
-(inflated by the node's max particle radius) could intersect the ray, and only leaf particles ever
-contribute.  So the tree result must agree with direct summation to machine precision -- unlike the
-gravity walks, there is no opening-angle truncation error to absorb.  That makes tree-vs-direct a
-very sharp test, and it is the main workhorse here.
+The ray-traced walks are *exact*: a node opens whenever its bounding sphere (inflated by the node's
+max particle radius) could intersect the ray, and only leaf particles contribute.  So the tree must
+agree with direct summation to machine precision -- there is no opening-angle truncation error to
+absorb, unlike the gravity walks.  That makes tree-vs-direct the sharp test it is here.
 
-The underlying physics is one closed form.  A particle of mass M and radius h is a uniform sphere of
-density rho = 3M/(4 pi h^3).  A ray from ``pos`` in direction ``n`` (a unit vector) sees the sphere
-at separation ``d = x_p - pos``, with along-ray coordinate ``z = d.n`` and impact parameter
-``b = sqrt(|d|^2 - z^2)``.  The ray misses unless ``b < h``.  The full chord is
-``2 sqrt(h^2 - b^2)``, so
+The physics is one closed form.  A particle of mass M and radius h is a uniform sphere of density
+rho = 3M/(4 pi h^3).  A ray from ``pos`` along unit ``n`` sees it at separation ``d = x_p - pos``,
+with along-ray coordinate ``z = d.n`` and impact parameter ``b = sqrt(|d|^2 - z^2)``; it misses
+unless ``b < h``.  Outside the sphere the whole chord is traversed, inside only the forward half:
 
-    column = rho * 2 sqrt(h^2 - b^2) = 3M/(4 pi h^2) * 2 sqrt(1 - (b/h)^2)      [origin outside]
-
-and when the origin lies *inside* the sphere the ray only traverses the forward half-chord,
-
-    column = rho * (z + sqrt(h^2 - b^2)) = 3M/(4 pi h^2) * (z/h + sqrt(1 - (b/h)^2))
+    outside:  rho * 2 sqrt(h^2 - b^2)      = 3M/(4 pi h^2) * 2 sqrt(1 - (b/h)^2)
+    inside:   rho * (z + sqrt(h^2 - b^2))  = 3M/(4 pi h^2) * (z/h + sqrt(1 - (b/h)^2))
 """
 
 import os
@@ -28,7 +23,12 @@ from pytreegrav import ColumnDensity, ConstructTree
 from pytreegrav.grouped_treewalk import _morton_order
 from pytreegrav.misc import random_rotation
 from pytreegrav.treewalk import (
+    COLUMN_GROUP_MIN_TARGETS,
     MULTIRAY_MAX_RAYS,
+    ColumnDensity_grouped,
+    ColumnDensity_grouped_parallel,
+    ColumnDensityBinned_grouped,
+    ColumnDensityBinned_grouped_parallel,
     ColumnDensityWalk_binned,
     ColumnDensityWalk_multiray,
     ColumnDensityWalk_singleray,
@@ -130,6 +130,16 @@ def isotropic_rays(n, seed=0):
     rng = np.random.default_rng(seed)
     rays = rng.normal(size=(n, 3))
     return rays / np.linalg.norm(rays, axis=1)[:, None]
+
+
+def spy(record, name, func):
+    """Wrap ``func`` so calling it appends ``name`` to ``record``, for asserting which walk ran."""
+
+    def wrapper(*args, **kwargs):
+        record.append(name)
+        return func(*args, **kwargs)
+
+    return wrapper
 
 
 # --------------------------------------------------------------------------------------------------
@@ -238,19 +248,15 @@ def test_tree_matches_direct_sum_wide_radius_range():
 
 
 def test_clustered_configuration():
-    """Two well-separated clumps: deep trees, long empty stretches along rays, and -- deliberately --
-    a large separation-to-radius ratio, which is where the impact parameter becomes ill-conditioned.
+    """Two well-separated clumps: deep trees, long empty stretches, and -- deliberately -- a large
+    separation-to-radius ratio, where the impact parameter goes ill-conditioned.
 
-    Both the walk and the reference compute ``b^2 = r^2 - z^2``.  For a nearly radial ray at large
-    distance, r ~ z, so that subtraction cancels: at separation/radius = 200 it loses ~4-5 digits,
-    and ``sqrt(1 - q^2)`` then amplifies the loss for rays grazing a sphere's edge (its derivative
-    diverges as the chord goes to zero).  The two implementations lose the same digits and differ
-    only in rounding, so this is a conditioning property of the formulation, not a defect -- and it
-    is harmless, because the amplification is largest exactly where the contribution is smallest.
-    Hence 1e-9 here rather than the 1e-12 used everywhere else.
-
-    The cancellation-free form ``b = |d - (d.n) n|`` removes it entirely but costs ~13% on the hot
-    loop, which is not worth digits 12-16 of an extinction estimate built on uniform spheres.
+    Walk and reference both compute ``b^2 = r^2 - z^2``.  For a nearly radial ray at large distance
+    r ~ z, so that subtraction cancels: at separation/radius = 200 it loses ~4-5 digits, and
+    ``sqrt(1 - q^2)`` amplifies the loss for edge-grazing rays.  Both lose the same digits and differ
+    only in rounding -- a property of the formulation, not a defect, and harmless since the
+    amplification peaks exactly where the contribution vanishes.  Hence 1e-9 rather than 1e-12.
+    The cancellation-free ``b = |d - (d.n) n|`` fixes it but costs ~13% on the hot loop.
     """
     rng = np.random.default_rng(5)
     a = rng.normal(scale=0.1, size=(200, 3))
@@ -293,10 +299,9 @@ def test_multiray_matches_singleray(nrays):
 
 
 # --------------------------------------------------------------------------------------------------
-# A supplied tree may hold a different particle set than the targets -- explicitly documented on
-# ColumnDensity.  It used to permute the targets by the *tree's* TreewalkIndices, which do not index
-# pos: a larger tree raised IndexError and a smaller one silently returned the wrong number of rows.
-# The targets are now Morton-sorted on their own, as PotentialTarget/AccelTarget already do.
+# A supplied tree may hold a different particle set than the targets, as ColumnDensity documents.  It
+# used to permute targets by the *tree's* TreewalkIndices, which do not index pos: a larger tree
+# raised IndexError, a smaller one silently returned too few rows.  Targets are now sorted on their own.
 # --------------------------------------------------------------------------------------------------
 
 
@@ -348,13 +353,11 @@ def test_randomize_rays_matches_direct_sum(nrays, parallel):
     """``randomize_rays`` rotates the ray grid per target; both dispatch branches must be exact.
 
     At or below MULTIRAY_MAX_RAYS this takes the bundled multiray walk, above it one single-ray walk
-    per direction.  The parametrization straddles the threshold so a change to it cannot silently
-    leave one branch untested.
+    per direction; the parametrization straddles the threshold so neither branch can go untested.
 
-    The reference has to reproduce the seeding exactly: ColumnDensity reorders the targets before
-    walking, so the target sitting at position ``k`` of the reordered array -- original index
-    ``idx[k]`` -- is rotated by ``random_rotation(k)``, not ``random_rotation(idx[k])``.  With no
-    tree supplied the ordering is the tree's own walk order.
+    The reference must reproduce the seeding exactly: ColumnDensity reorders targets before walking,
+    so the one at position ``k`` of the reordered array -- original index ``idx[k]`` -- is rotated by
+    ``random_rotation(k)``, not ``random_rotation(idx[k])``.
     """
     x, m, h = cloud(200, seed=51)
     rays = isotropic_rays(nrays, seed=nrays)
@@ -438,10 +441,226 @@ def test_binned_estimator_linear_in_mass():
 
 
 # --------------------------------------------------------------------------------------------------
-# Glass sphere: the column from the centre of a uniform sphere out to infinity is exactly rho*R in
-# every direction.  This is the end-to-end physics check -- it exercises the geometry, the mass
-# normalization of the uniform-sphere kernel, and the isotropy of the traversal all at once, against
-# a closed form that does not depend on the implementation.
+# Grouped walk: one traversal per (group, ray) instead of per (target, ray).  The reach is padded by
+# the group's bbox half-diagonal, so it opens a superset -- but the extra leaves contribute nothing and
+# each target accumulates in the same order, so the result must be *bit-identical*, not merely close.
+# That is the sharpest assertion available, so it is the main one here.
+# --------------------------------------------------------------------------------------------------
+
+
+def per_target_walk(pos, rays, tree):
+    """Reference: the per-target single-ray walk, looped in Python."""
+    return np.array([[ColumnDensityWalk_singleray(p, r, tree) for r in rays] for p in pos])
+
+
+@pytest.mark.parametrize("group_size", [1, 2, 4, 8, 16])
+def test_grouped_is_bit_identical_to_per_target(group_size):
+    x, m, h = cloud(1500, seed=71)
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)  # grouping needs Morton order
+    rays = isotropic_rays(5, seed=71)
+
+    got = ColumnDensity_grouped(xs, rays, tree, group_size)
+    want = per_target_walk(xs, rays, tree)
+    assert np.array_equal(got, want), f"group_size={group_size}: max diff {np.abs(got - want).max()}"
+
+
+def test_grouped_parallel_matches_serial():
+    """The parallel variant is what the frontend actually calls, so check it explicitly rather than
+    relying on the serial one.  Each group owns its own output rows, so there is no reduction and the
+    result should be bit-identical, not merely close."""
+    x, m, h = cloud(1500, seed=78)
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    rays = isotropic_rays(5, seed=78)
+    serial = ColumnDensity_grouped(xs, rays, tree, 16)
+    par = ColumnDensity_grouped_parallel(xs, rays, tree, 16)
+    assert np.array_equal(serial, par), f"max diff {np.abs(serial - par).max()}"
+
+
+def test_grouped_matches_direct_sum():
+    """Independent check against direct summation, not just against the other walk."""
+    x, m, h = cloud(1100, seed=72)
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    rays = isotropic_rays(3, seed=72)
+    got = ColumnDensity_grouped(xs, rays, tree, 8)
+    assert rel_err(got, column_reference(xs, rays, xs, m, h)) < RTOL
+
+
+def test_grouped_handles_zero_radii():
+    """The zero-radius guard is duplicated in the grouped kernel, so it needs its own check."""
+    x, m, h = cloud(1200, seed=73)
+    h = h.copy()
+    h[:20] = 0.0
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    got = ColumnDensity_grouped(xs, SIX_RAYS, tree, 8)
+    assert np.isfinite(got).all()
+    assert np.array_equal(got, per_target_walk(xs, SIX_RAYS, tree))
+
+
+def test_grouped_tail_group():
+    """N not divisible by group_size: the final short group must still be handled."""
+    x, m, h = cloud(1003, seed=74)  # 1003 = 8*125 + 3
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    rays = isotropic_rays(3, seed=74)
+    assert np.array_equal(ColumnDensity_grouped(xs, rays, tree, 8), per_target_walk(xs, rays, tree))
+
+
+@pytest.mark.parametrize("ntarget", [COLUMN_GROUP_MIN_TARGETS - 1, COLUMN_GROUP_MIN_TARGETS])
+def test_frontend_dispatches_across_the_grouping_threshold(ntarget, monkeypatch):
+    """Both sides of COLUMN_GROUP_MIN_TARGETS must be exercised and must agree with direct summation."""
+    import pytreegrav.frontend as fe
+
+    called = []
+    for name in (
+        "ColumnDensity_grouped",
+        "ColumnDensity_grouped_parallel",
+        "ColumnDensity_tree",
+        "ColumnDensity_tree_parallel",
+    ):
+        real = getattr(fe, name)
+        monkeypatch.setattr(fe, name, spy(called, name, real))
+
+    x, m, h = cloud(ntarget, seed=75)
+    got = ColumnDensity(x, m, h, rays=SIX_RAYS, parallel=True)
+    expect = "grouped" if ntarget >= COLUMN_GROUP_MIN_TARGETS else "tree"
+    assert any(expect in c for c in called), f"expected the {expect} walk, got {called}"
+    assert rel_err(got, column_reference(x, SIX_RAYS, x, m, h)) < RTOL
+
+
+def test_randomize_rays_never_uses_the_grouped_walk(monkeypatch):
+    """Grouping needs a shared ray grid, which randomize_rays breaks by construction."""
+    import pytreegrav.frontend as fe
+
+    called = []
+    for name in ("ColumnDensity_grouped", "ColumnDensity_grouped_parallel"):
+        real = getattr(fe, name)
+        monkeypatch.setattr(fe, name, spy(called, name, real))
+
+    x, m, h = cloud(1500, seed=76)
+    ColumnDensity(x, m, h, rays=SIX_RAYS, randomize_rays=True, parallel=True)
+    assert called == [], f"grouped walk used with randomize_rays: {called}"
+
+
+def test_grouped_group_size_one_matches_default_path():
+    """group_size=1 degenerates to the per-target walk, so it must match the ungrouped frontend."""
+    x, m, h = cloud(1500, seed=77)
+    a = ColumnDensity(x, m, h, rays=SIX_RAYS, parallel=True, group_size=1)
+    b = ColumnDensity(x, m, h, rays=SIX_RAYS, parallel=True, group_size=8)
+    assert np.array_equal(a, b)
+
+
+# --------------------------------------------------------------------------------------------------
+# Grouped angular-binned estimator (rays=None).  Acceptance uses r_min, the nearest distance from the
+# node to the group's bounding box, so the group opens a superset of nodes.  Nodes contribute here, so
+# unlike the ray-traced grouped walk the answer *changes* -- for the better, since each node's mass is
+# split across the sky bins more finely.  group_size=1 makes r_min the exact per-target distance.
+# --------------------------------------------------------------------------------------------------
+
+
+def per_target_binned(pos, tree, theta=0.5):
+    return np.array([ColumnDensityWalk_binned(p, tree, theta) for p in pos])
+
+
+def test_grouped_binned_group_size_one_matches_per_target():
+    """group_size=1 collapses the bounding box to a point, so r_min is the per-target distance."""
+    x, m, h = cloud(1500, seed=81)
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    got = ColumnDensityBinned_grouped(xs, tree, 0.5, 1)
+    assert rel_err(got, per_target_binned(xs, tree)) < RTOL
+
+
+@pytest.mark.parametrize("group_size", [1, 16])
+def test_grouped_binned_parallel_matches_serial(group_size):
+    """Not bit-exact, unlike the ray-traced kernel: this one accumulates over the 6 bins in an inner
+    loop (``for k in range(n_bins): out[t, k] += col_isotropic``), which fastmath reassociates
+    differently under parallel=True.  Measured at one ulp -- 2.4e-16 relative -- so 1e-14 is tight."""
+    x, m, h = cloud(1500, seed=82)
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    a = ColumnDensityBinned_grouped(xs, tree, 0.5, group_size)
+    b = ColumnDensityBinned_grouped_parallel(xs, tree, 0.5, group_size)
+    assert rel_err(a, b) < 1e-14
+
+
+def test_grouped_binned_conserves_mass_and_stays_sane():
+    """Grouping must not create or destroy column: all bins positive, and the sky-averaged total
+    stays within a few percent of the per-target walk (it shifts, but only at the theta level)."""
+    x, m, h = cloud(2000, seed=83)
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    ref = per_target_binned(xs, tree)
+    for group_size in (4, 16):
+        got = ColumnDensityBinned_grouped(xs, tree, 0.5, group_size)
+        assert np.isfinite(got).all()
+        assert (got >= 0).all()
+        assert abs(got.mean() / ref.mean() - 1) < 0.05, f"group_size={group_size} shifted the sky mean"
+
+
+def test_grouped_binned_handles_zero_radii():
+    x, m, h = cloud(1200, seed=84)
+    h = h.copy()
+    h[:20] = 0.0
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    assert np.isfinite(ColumnDensityBinned_grouped(xs, tree, 0.5, 16)).all()
+
+
+def test_grouped_binned_tail_group():
+    x, m, h = cloud(1003, seed=85)
+    tree = ConstructTree(x, m, h)
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    got = ColumnDensityBinned_grouped(xs, tree, 0.5, 16)
+    assert got.shape == (1003, 6)
+    assert np.isfinite(got).all() and (got >= 0).all()
+
+
+@pytest.mark.parametrize("ntarget", [COLUMN_GROUP_MIN_TARGETS - 1, COLUMN_GROUP_MIN_TARGETS])
+def test_frontend_dispatches_binned_across_the_threshold(ntarget, monkeypatch):
+    import pytreegrav.frontend as fe
+
+    called = []
+    for name in (
+        "ColumnDensityBinned_grouped",
+        "ColumnDensityBinned_grouped_parallel",
+        "ColumnDensity_tree",
+        "ColumnDensity_tree_parallel",
+    ):
+        monkeypatch.setattr(fe, name, spy(called, name, getattr(fe, name)))
+
+    x, m, h = cloud(ntarget, seed=86)
+    got = ColumnDensity(x, m, h, parallel=True)  # rays=None -> binned
+    expect = "Binned_grouped" if ntarget >= COLUMN_GROUP_MIN_TARGETS else "ColumnDensity_tree"
+    assert any(expect in c for c in called), f"expected {expect}, got {called}"
+    assert got.shape == (ntarget, 6)
+    assert np.isfinite(got).all() and (got >= 0).all()
+
+
+def test_grouped_binned_beats_per_target_on_the_glass_sphere():
+    """The accuracy claim, against a known truth: the central column of a uniform sphere is rho*R in
+    every direction, so bin-to-bin spread is pure error.  Grouping must shrink it."""
+    x, m, h, expected = glass_sphere_ic(eta=3.0)
+    tree = ConstructTree(x, m, h)
+    centre = int(np.linalg.norm(x, axis=1).argmin())
+    xs = np.take(x, tree.TreewalkIndices, axis=0)
+    inv = np.empty(len(x), dtype=np.int64)
+    inv[tree.TreewalkIndices] = np.arange(len(x))
+
+    ref = ColumnDensityWalk_binned(x[centre], tree, 0.5) / expected
+    got = ColumnDensityBinned_grouped_parallel(xs, tree, 0.5, 16)[inv[centre]] / expected
+    spread_ref, spread_got = np.ptp(ref), np.ptp(got)
+    assert spread_got < spread_ref, f"grouped spread {spread_got:.3f} should beat per-target {spread_ref:.3f}"
+    assert abs(got.mean() - 1) <= abs(ref.mean() - 1) + 1e-3, f"grouped mean {got.mean():.4f} vs {ref.mean():.4f}"
+
+
+# --------------------------------------------------------------------------------------------------
+# Glass sphere: the column from the centre of a uniform sphere is exactly rho*R in every direction.
+# The end-to-end physics check -- geometry, kernel mass normalization and traversal isotropy at once,
+# against a closed form independent of the implementation.
 #
 # Calibration at eta = 3 (h = 3 * glass spacing), R = 0.45, N ~ 1.0e5, 200 isotropic rays:
 #   ray-traced   mean/expected = 0.9979, per-ray scatter 0.0027, worst single ray within 1.0%
