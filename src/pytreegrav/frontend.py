@@ -966,14 +966,21 @@ def ColumnDensity(
             "density. Supply a nonzero radius if their mass should be included."
         )
 
+    pos = np.float64(pos)
     if tree is None:
         tree = ConstructTree(
-            np.float64(pos),
+            pos,
             np.float64(m),
             np.float64(radii),
         )  # build the tree if needed
-    idx = tree.TreewalkIndices
-    pos_sorted = np.take(pos, idx, axis=0)
+        # the tree was just built from pos, so its walk order already is pos's Morton order
+        idx = tree.TreewalkIndices
+    else:
+        # A supplied tree may hold a different set of particles than the targets, so its
+        # TreewalkIndices do not index pos.  Morton-sort the targets on their own instead, as
+        # PotentialTarget/AccelTarget do -- the ordering only buys locality, never correctness.
+        idx = _morton_order(pos)
+    pos_sorted = pos[idx]
 
     if type(rays) == int:
         if rays == 6:
@@ -1005,7 +1012,9 @@ def ColumnDensity(
         columns = ColumnDensity_tree(pos_sorted, tree, rays, randomize_rays=randomize_rays, theta=theta)
     if np.any(np.isnan(columns)):
         print("WARNING some column densities are NaN!")
-    columns = np.take(columns, idx.argsort(), axis=0)
+    unsorted = np.empty_like(columns)
+    unsorted[idx] = columns  # undo the permutation
+    columns = unsorted
 
     if return_tree:
         return columns, tree

@@ -25,7 +25,10 @@ import numpy as np
 import pytest
 
 from pytreegrav import ColumnDensity, ConstructTree
+from pytreegrav.grouped_treewalk import _morton_order
+from pytreegrav.misc import random_rotation
 from pytreegrav.treewalk import (
+    MULTIRAY_MAX_RAYS,
     ColumnDensityWalk_binned,
     ColumnDensityWalk_multiray,
     ColumnDensityWalk_singleray,
@@ -287,6 +290,113 @@ def test_multiray_matches_singleray(nrays):
         multi = ColumnDensityWalk_multiray(x[i], rays, tree)
         single = np.array([ColumnDensityWalk_singleray(x[i], r, tree) for r in rays])
         assert rel_err(multi, single) < RTOL
+
+
+# --------------------------------------------------------------------------------------------------
+# A supplied tree may hold a different particle set than the targets -- explicitly documented on
+# ColumnDensity.  It used to permute the targets by the *tree's* TreewalkIndices, which do not index
+# pos: a larger tree raised IndexError and a smaller one silently returned the wrong number of rows.
+# The targets are now Morton-sorted on their own, as PotentialTarget/AccelTarget already do.
+# --------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_prebuilt_tree_with_different_particles(parallel):
+    """Sources and targets are disjoint sets of different sizes -- the documented use of ``tree=``."""
+    xs, ms, hs = cloud(400, seed=61)  # sources
+    tree = ConstructTree(xs, ms, hs)
+    rng = np.random.default_rng(62)
+    targets = np.ascontiguousarray(rng.normal(size=(37, 3)) * 1.5)  # far fewer, and elsewhere
+
+    got = ColumnDensity(targets, ms, hs, rays=SIX_RAYS, tree=tree, parallel=parallel)
+    assert got.shape == (len(targets), 6)
+    want = column_reference(targets, SIX_RAYS, xs, ms, hs)
+    assert rel_err(got, want) < RTOL
+
+
+def test_prebuilt_tree_with_more_particles_than_targets():
+    """The case that used to raise IndexError: the tree is larger than the target array."""
+    xs, ms, hs = cloud(1000, seed=63)
+    tree = ConstructTree(xs, ms, hs)
+    targets = np.ascontiguousarray(xs[:10])  # 10 targets against a 1000-particle tree
+    got = ColumnDensity(targets, ms, hs, rays=SIX_RAYS, tree=tree)
+    assert got.shape == (10, 6)
+    assert rel_err(got, column_reference(targets, SIX_RAYS, xs, ms, hs)) < RTOL
+
+
+def test_prebuilt_tree_of_the_same_particles_still_works():
+    """Regression on the common path: passing the tree back in must match building it internally."""
+    x, m, h = cloud(300, seed=64)
+    tree = ConstructTree(x, m, h)
+    with_tree = ColumnDensity(x, m, h, rays=SIX_RAYS, tree=tree, parallel=True)
+    without = ColumnDensity(x, m, h, rays=SIX_RAYS, parallel=True)
+    assert rel_err(with_tree, without) < RTOL
+    assert rel_err(with_tree, column_reference(x, SIX_RAYS, x, m, h)) < RTOL
+
+
+def test_return_tree_round_trips():
+    """The tree handed back by return_tree must be reusable for the same targets."""
+    x, m, h = cloud(300, seed=65)
+    first, tree = ColumnDensity(x, m, h, rays=SIX_RAYS, return_tree=True)
+    second = ColumnDensity(x, m, h, rays=SIX_RAYS, tree=tree)
+    assert rel_err(second, first) < RTOL
+
+
+@pytest.mark.parametrize("nrays", [6, MULTIRAY_MAX_RAYS, MULTIRAY_MAX_RAYS + 1, 48])
+@pytest.mark.parametrize("parallel", [False, True])
+def test_randomize_rays_matches_direct_sum(nrays, parallel):
+    """``randomize_rays`` rotates the ray grid per target; both dispatch branches must be exact.
+
+    At or below MULTIRAY_MAX_RAYS this takes the bundled multiray walk, above it one single-ray walk
+    per direction.  The parametrization straddles the threshold so a change to it cannot silently
+    leave one branch untested.
+
+    The reference has to reproduce the seeding exactly: ColumnDensity reorders the targets before
+    walking, so the target sitting at position ``k`` of the reordered array -- original index
+    ``idx[k]`` -- is rotated by ``random_rotation(k)``, not ``random_rotation(idx[k])``.  With no
+    tree supplied the ordering is the tree's own walk order.
+    """
+    x, m, h = cloud(200, seed=51)
+    rays = isotropic_rays(nrays, seed=nrays)
+
+    got = ColumnDensity(x, m, h, rays=rays, randomize_rays=True, parallel=parallel)
+
+    # ColumnDensity built its tree from (x, m, h); rebuild the identical one for its walk order
+    idx = ConstructTree(np.float64(x), np.float64(m), np.float64(h)).TreewalkIndices
+    want = np.empty_like(got)
+    for k, orig in enumerate(idx):
+        want[orig] = column_reference(x[orig], rays @ random_rotation(k), x, m, h)[0]
+    assert rel_err(got, want) < RTOL
+
+
+@pytest.mark.parametrize("nrays", [MULTIRAY_MAX_RAYS, MULTIRAY_MAX_RAYS + 1])
+def test_randomize_rays_with_prebuilt_tree(nrays):
+    """Same check on the supplied-tree path, where the targets are Morton-sorted on their own."""
+    x, m, h = cloud(200, seed=52)
+    tree = ConstructTree(x, m, h)
+    rays = isotropic_rays(nrays, seed=nrays)
+
+    got = ColumnDensity(x, m, h, rays=rays, randomize_rays=True, tree=tree, parallel=True)
+
+    idx = _morton_order(np.float64(x))
+    want = np.empty_like(got)
+    for k, orig in enumerate(idx):
+        want[orig] = column_reference(x[orig], rays @ random_rotation(k), x, m, h)[0]
+    assert rel_err(got, want) < RTOL
+
+
+def test_randomize_rays_branches_agree():
+    """The two dispatch branches are the same calculation, so straddling the threshold with the same
+    ray directions must not change the answer beyond the extra rays themselves."""
+    x, m, h = cloud(200, seed=53)
+    tree = ConstructTree(x, m, h)
+    rays = isotropic_rays(MULTIRAY_MAX_RAYS + 4, seed=1)
+
+    # the first MULTIRAY_MAX_RAYS directions go through the bundled walk on their own ...
+    small = ColumnDensity(x, m, h, rays=rays[:MULTIRAY_MAX_RAYS], randomize_rays=True, tree=tree)
+    # ... and through the per-ray walk when the bundle is one over the threshold
+    large = ColumnDensity(x, m, h, rays=rays, randomize_rays=True, tree=tree)
+    assert rel_err(large[:, :MULTIRAY_MAX_RAYS], small) < RTOL
 
 
 def test_multiray_matches_direct_sum():

@@ -6,6 +6,19 @@ from .misc import *
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+# Ray count above which ColumnDensity_tree stops using the bundled multi-ray walk and issues one
+# single-ray walk per direction instead.  ColumnDensityWalk_multiray traverses once for the whole
+# bundle but opens the union of every ray's node set and then evaluates each accepted element
+# against all N_rays rays, so it costs O(N_rays^2) where N_rays independent walks cost O(N_rays).
+# It wins only while the bundle is small enough for traversal amortization to dominate.
+# Measured on an M3 Max at N=30000, multiray / (N_rays x singleray):
+#     N_rays =  12 -> 0.73x (multiray faster)
+#     N_rays =  48 -> 1.21x
+#     N_rays = 192 -> 2.07x (multiray much slower)
+# so the crossover sits near 24.  Both walks are exact and agree to zero disagreement, so this
+# threshold only trades speed, never accuracy.
+MULTIRAY_MAX_RAYS = 24
+
 
 @njit(fastmath=True)
 def acceptance_criterion(r: float, h: float, size: float, delta: float, theta: float) -> bool:
@@ -51,15 +64,21 @@ def PotentialWalk(pos, tree, softening=0, no=-1, theta=0.7):
     tree - octree object storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
     phi = 0
     dx = np.empty(3, dtype=np.float64)
 
-    while no > -1:
+    while no > -1 and no != stop:
         r = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -93,15 +112,21 @@ def PotentialWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):
     tree - octree object storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
     phi = 0
     dx = np.empty(3, dtype=np.float64)
 
-    while no > -1:
+    while no > -1 and no != stop:
         r = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -139,15 +164,21 @@ def AccelWalk(pos, tree, softening=0, no=-1, theta=0.7):
     tree - octree instance storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
     g = zeros(3, dtype=np.float64)
     dx = np.empty(3, dtype=np.float64)
 
-    while no > -1:  # loop until we get to the end of the tree
+    while no > -1 and no != stop:  # loop until we get to the end of the tree
         r2 = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -190,15 +221,21 @@ def AccelWalk_quad(pos, tree, softening=0, no=-1, theta=0.7):  # ,include_self_p
     tree - octree instance storing the tree structure
     Keyword arguments:
     softening - softening radius of the particle at which the force is being evaluated - we use the greater of the target and source softenings when evaluating the softened potential
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
     theta - cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7 gives ~0.2% RMS acceleration error on a Plummer sphere)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
     g = zeros(3, dtype=np.float64)
     dx = np.empty(3, dtype=np.float64)
 
-    while no > -1:  # loop until we get to the end of the tree
+    while no > -1 and no != stop:  # loop until we get to the end of the tree
         r2 = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -369,6 +406,12 @@ def DensityCorrWalk(
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
 
     Nbins = rbins.shape[0] - 1
     mbin = zeros(Nbins)
@@ -381,7 +424,7 @@ def DensityCorrWalk(
     logr_max = np.log10(rmax)
     dlogr = logr_max - logr_min
 
-    while no > -1:
+    while no > -1 and no != stop:
         r = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -508,6 +551,12 @@ def VelocityCorrWalk(
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
 
     Nbins = rbins.shape[0] - 1
     binsums = zeros(Nbins)
@@ -521,7 +570,7 @@ def VelocityCorrWalk(
     logr_max = np.log10(rmax)
     dlogr = logr_max - logr_min
 
-    while no > -1:
+    while no > -1 and no != stop:
         r = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -661,6 +710,12 @@ def VelocityStructWalk(
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
 
     Nbins = rbins.shape[0] - 1
     binsums = zeros(Nbins)
@@ -672,7 +727,7 @@ def VelocityStructWalk(
     logr_max = np.log10(rmax)
     dlogr = logr_max - logr_min
 
-    while no > -1:
+    while no > -1 and no != stop:
         r = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -795,10 +850,16 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
     columns - (N_rays,) array of column densities along directions given by rays
 
     Keyword arguments:
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
 
     N_rays = rays.shape[0]
     columns = np.zeros(N_rays)
@@ -807,7 +868,7 @@ def ColumnDensityWalk_multiray(pos, rays, tree, no=-1):
 
     fac_density = 3 / (4 * np.pi)
 
-    while no > -1:
+    while no > -1 and no != stop:
         r2 = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -879,17 +940,23 @@ def ColumnDensityWalk_singleray(pos, ray, tree, no=-1):
     columns - (N_rays,) array of column densities along directions given by rays
 
     Keyword arguments:
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
 
     column = 0
     dx = np.empty(3, dtype=np.float64)
     z_ray = 0  # perpendicular distances of elements to nearest point on rays
     fac_density = 3 / (4 * np.pi)
 
-    while no > -1:
+    while no > -1 and no != stop:
         r2 = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -952,17 +1019,23 @@ def ColumnDensityWalk_binned(pos, tree, theta=0.5, no=-1):
     columns - shape (6,) array of average column densities in the 6 equal bins on the sphere
 
     Keyword arguments:
-    no - index of the top-level node whose field is being summed - defaults to the global top-level node, can use a subnode in principle for e.g. parallelization
+    no - index of the top-level node whose field is being summed - defaults to the global top-level node; passing a subnode restricts the sum to that subtree, so summing over a node's children reproduces the node's own result (useful for e.g. parallelization)
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
+    # NextBranch[no] is where the depth-first order resumes once no's entire subtree has been
+    # visited, so halting there confines the walk to that subtree.  Without this the NextBranch
+    # chain simply walks back out of the subtree and keeps going, making a subnode start indexi-
+    # cally meaningless -- it returned the same answer as starting from the root.  For the root
+    # NextBranch is -1, so the default path is unchanged.
+    stop = tree.NextBranch[no]
 
     n_bins = 6
     column = np.zeros(n_bins)
     dx = np.empty(3, dtype=np.float64)
     angular_bin_size = (4 * np.pi) / n_bins
 
-    while no > -1:
+    while no > -1 and no != stop:
         r2 = 0
         for k in range(3):
             dx[k] = tree.Coordinates[no, k] - pos[k]
@@ -1007,9 +1080,6 @@ def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=
     rays: array_like
         Shape (N_rays,3) array of ray direction unit vectors. If None then we instead compute average column densities in a 6-bin tesselation of the sphere.
     randomize_rays: bool, optional
-    Randomly orients the raygrid for each particle.
-    Randomly orients the raygrid for each particle.
-
         Randomly orients the raygrid for each particle.
 
     theta - cell opening angle; smaller is slower (runtime ~ theta^-3) but more accurate (default 0.7)
@@ -1020,12 +1090,24 @@ def ColumnDensity_tree(pos_target, tree, rays=None, randomize_rays=False, theta=
             result = empty((pos_target.shape[0], 6))
             for i in prange(pos_target.shape[0]):
                 result[i] = ColumnDensityWalk_binned(pos_target[i], tree, theta)
-        elif randomize_rays:
-            # use the multi-ray treewalk; more efficient
+        elif randomize_rays and rays.shape[0] <= MULTIRAY_MAX_RAYS:
+            # Small bundle: one traversal for the whole grid amortizes the descent across the rays.
             result = empty((pos_target.shape[0], len(rays)))
             for i in prange(pos_target.shape[0]):
                 rays_random = rays @ random_rotation(i)
                 result[i] = ColumnDensityWalk_multiray(pos_target[i], rays_random, tree)
+        elif randomize_rays:
+            # Large bundle: the multiray walk opens the *union* of every ray's node set and then
+            # evaluates each element against all N_rays rays, so it costs O(N_rays^2 * N^(1/3)),
+            # while independent single-ray walks cost O(N_rays * N^(1/3)).  Rays sharing an origin
+            # diverge past the top few levels, so the union really does grow with N_rays.  Both
+            # walks are conservative and test each leaf per-ray, so they agree exactly (measured:
+            # zero disagreement) -- this is purely a cost decision.  See MULTIRAY_MAX_RAYS.
+            result = empty((pos_target.shape[0], len(rays)))
+            for i in prange(pos_target.shape[0]):
+                rays_random = rays @ random_rotation(i)
+                for j in range(rays_random.shape[0]):
+                    result[i, j] = ColumnDensityWalk_singleray(pos_target[i], rays_random[j], tree)
         else:
             result = empty((pos_target.shape[0], len(rays)))
             for i in range(rays.shape[0]):
