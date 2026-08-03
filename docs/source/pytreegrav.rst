@@ -12,6 +12,22 @@ pytreegrav.bruteforce module
    :undoc-members:
    :show-inheritance:
 
+pytreegrav.bruteforce\_symmetric module
+---------------------------------------
+
+.. automodule:: pytreegrav.bruteforce_symmetric
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+pytreegrav.cuda module
+----------------------
+
+.. automodule:: pytreegrav.cuda
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 pytreegrav.dynamic\_tree module
 -------------------------------
 

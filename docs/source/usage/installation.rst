@@ -69,6 +69,19 @@ and by importing the pytreegrav Python frontend in Python
 
     import pytreegrav
 
+Optional: GPU acceleration
+--------------------------
+
+The ray-traced column density path has an optional CUDA backend, roughly 12-18x faster than the
+parallel CPU walk. Install the extra with
+
+.. code-block:: bash
+
+    pip install pytreegrav[cuda]
+
+See :ref:`cuda` for usage and caveats. This is optional in the strict sense: nothing in pytreegrav
+imports it unless you ask for it, so a CPU-only install is unaffected.
+
 Testing
 -------
 

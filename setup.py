@@ -19,6 +19,12 @@ install_requires = [
     "scipy",  # scipy.spatial.transform.Rotation, used to build the ray grid in treewalk
 ]
 
+# Optional CUDA backend (pytreegrav.cuda), used only when explicitly imported or via
+# ColumnDensity(device="cuda"). numba-cuda provides numba.cuda from numba 0.62 on, where the CUDA
+# target was split out of numba proper; it pulls in the cuda-bindings/core/pathfinder wheels and
+# leaves numba, numpy and llvmlite untouched.
+extras_require = {"cuda": ["numba-cuda>=0.30"]}
+
 setuptools.setup(
     name="pytreegrav",
     version="1.2.0",
@@ -39,4 +45,5 @@ setuptools.setup(
     packages=setuptools.find_packages(where="src"),
     python_requires=">=3.6",
     install_requires=install_requires,
+    extras_require=extras_require,
 )

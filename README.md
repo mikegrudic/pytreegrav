@@ -160,6 +160,18 @@ print("Brute force potential runtime in parallel: %gs"%(time() - t)); t = time()
     Tree potential runtime in parallel: 0.181393s
     Brute force potential runtime in parallel: 5.72611s
 
+For parallel *brute force* there are two kernels, and pytreegrav picks between them for you. The
+straightforward one gives each thread a single target particle, so it can only ever write that
+particle's own result and must therefore evaluate all N² pairs — twice the work of the serial
+upper-triangular loop. Above ``SYMMETRIC_NMIN`` particles (1000) it instead uses a symmetrized kernel
+that evaluates each pair once and writes both sides, worth close to the expected 2× (e.g. 145 ms →
+74 ms at N=32768 on 16 threads). The price is per-thread scratch — ``nthreads*N`` doubles for the
+potential, 3× that for the acceleration, so 13/38 MB at N=10⁵ on 16 threads. Below the crossover the
+simpler kernel wins anyway, because the symmetrized one runs two parallel regions to its one and a
+``prange`` costs a full thread-team barrier however few iterations it has.
+
+You can call ``Potential_bruteforce_symmetric`` / ``Accel_bruteforce_symmetric`` directly if you want
+to bypass the dispatch, but there is rarely a reason to.
 
 # What if I want to evaluate the fields at different points than where the particles are?
 
@@ -206,6 +218,34 @@ columns_custom = ColumnDensity(x, m, h, rays=np.random.normal(size=(100,3)), par
 Σ_eff = 𝛕_eff / κ # effective column density *for this opacity* in code mass/code length^2
 NH_eff = Σ_eff X_H / m_p  # column density in H nuclei code length^-2
 ```
+
+## GPU-accelerated ray-tracing (optional)
+
+The ray-traced path has an optional CUDA backend, measured at **11.8x / 15.1x / 18.2x** over the
+parallel CPU walk at N = 1e5 / 1e6 / 3e6 on an RTX A6000 against 32 Xeon Gold 6244 threads. It is
+single precision, so expect ~1e-5 relative error rather than the CPU path's ~1e-15 — far below the
+error of the uniform-sphere density model itself, but not interchangeable with it.
+
+```
+pip install pytreegrav[cuda]     # adds numba-cuda; nothing changes for CPU-only users
+```
+
+```python
+columns = ColumnDensity(x, m, h, rays=6, device="cuda")  # single shot; repacks and uploads each call
+```
+
+The tree upload is the fixed cost (~180 ms for a 1e6-particle tree, against ~500 ms for a 6-ray
+pass), so for repeated evaluation — many ray grids, target subsets, or timesteps — hold a context
+and reuse it:
+
+```python
+from pytreegrav.cuda import CudaColumnDensity
+ctx = CudaColumnDensity(tree)                 # pack + upload once
+columns = ctx(pos, rays)                      # per-call transfers are ~2% of runtime
+```
+
+`pytreegrav.cuda` is never imported by the package itself, so a CPU-only install is unaffected.
+Applies to the ray-traced path only (`rays` given, `randomize_rays` off), not the 6-bin estimator.
 
 # Community
 
