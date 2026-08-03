@@ -27,7 +27,7 @@ extras_require = {"cuda": ["numba-cuda>=0.30"]}
 
 setuptools.setup(
     name="pytreegrav",
-    version="1.2.0",
+    version="1.3.0",
     author="Mike Grudic",
     author_email="mike.grudich@gmail.com",
     description="Fast approximate gravitational force and potential calculations",
