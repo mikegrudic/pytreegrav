@@ -8,12 +8,15 @@ The below will help you quickly install pytreegrav.
 Requirements
 ------------
 
-You will need a working Python 3.x installation; we recommend installing `Anaconda <https://www.anaconda.com/download/>`_ Python version 3.x.
-You will also need to install the following packages:
+You will need Python 3.8 or newer. That floor comes from numba rather than from pytreegrav itself:
+the package needs ``numba >= 0.57`` for :code:`parallel_chunksize`, and the oldest numba meeting that
+requires Python 3.8. ``pip`` installs the rest for you:
 
     * numpy
 
-    * numba
+    * numba >= 0.57
+
+    * scipy
 
 Installing the latest stable release
 ------------------------------------
