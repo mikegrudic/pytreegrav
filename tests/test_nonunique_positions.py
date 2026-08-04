@@ -161,8 +161,10 @@ def test_dynamic_tree_matches_static_without_duplicates():
     assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(3000))
 
 
-@pytest.mark.parametrize("kwargs", ["{'radix': False}", "{'vel': np.zeros((5, 3))}", "{}"])
-def test_duplicates_at_the_origin_terminate(kwargs):
+BUILD_VARIANTS = ["{'radix': False}", "{'vel': np.zeros((5, 3))}", "{}"]
+
+
+def test_duplicates_at_the_origin_terminate():
     """Duplicated particles sitting at exactly [0, 0, 0] must not hang the build.
 
     Both insertion builds separate coincident particles by nudging one of them, and the nudge
@@ -173,28 +175,53 @@ def test_duplicates_at_the_origin_terminate(kwargs):
     A hang cannot be caught in-process, so this runs in a subprocess under a timeout; without
     the fix the two insertion cases spin until killed.
 
-    The timeout is deliberately far above the real cost (5 s on a warm numba cache, 19-24 s on a CI
-    runner) because the failure it detects is an *infinite* loop -- no finite timeout distinguishes 120 s
-    from 600 s for that, while the tight one made this flaky on cold/slow machines.
+    All three variants share one subprocess deliberately. Every fresh interpreter pays a full numba
+    compile of the tree machinery -- 325 MB peak and ~6 s here, several times that on a CI runner --
+    and three of those, two thirds of the way through the suite, was the most expensive moment in the
+    run and where a 3.13 runner twice killed the job with SIGTERM. One subprocess still detects a hang
+    in any variant, since a hang means no DONE line and the timeout fires, and the START/PASS markers
+    say which variant it was. A third of the cost, one memory peak instead of three.
+
+    The timeout is deliberately far above the real cost because the failure it detects is an
+    *infinite* loop -- no finite timeout distinguishes 120 s from 600 s for that, while a tight one
+    made this flaky on cold or loaded machines.
     """
-    src = textwrap.dedent(f"""
+    cases = "\n".join(
+        f'print("START {v}", flush=True)\ncheck(**{v})\nprint("PASS {v}", flush=True)' for v in BUILD_VARIANTS
+    )
+    src = (
+        textwrap.dedent(
+            """
         import warnings, numpy as np
         warnings.simplefilter("ignore")
         from pytreegrav import ConstructTree
-        x = np.array([[0.,0.,0.],[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]])
-        m, h = np.repeat(0.2, 5), np.repeat(0.1, 5)
-        tree = ConstructTree(x, m, h, **{kwargs})
-        assert tree.HasCoincidentPoints
-        assert np.isclose(tree.Masses[tree.NumParticles], 1.0)
-        assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(5))
-        print("OK")
-    """)
+
+
+        def check(**kw):
+            x = np.array([[0.,0.,0.],[0.,0.,0.],[1.,0.,0.],[0.,1.,0.],[0.,0.,1.]])
+            m, h = np.repeat(0.2, 5), np.repeat(0.1, 5)
+            tree = ConstructTree(x, m, h, **kw)
+            assert tree.HasCoincidentPoints
+            assert np.isclose(tree.Masses[tree.NumParticles], 1.0)
+            assert np.array_equal(np.sort(tree.TreewalkIndices), np.arange(5))
+
+        """
+        )
+        + cases
+        + '\nprint("DONE", flush=True)\n'
+    )
+
     try:
         r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=600)
-    except subprocess.TimeoutExpired:
-        pytest.fail(f"build with {kwargs} hung on duplicates at the origin")
-    assert r.returncode == 0, f"rc={r.returncode}: {r.stderr[-2000:]}"
-    assert "OK" in r.stdout
+    except subprocess.TimeoutExpired as e:
+        out = e.stdout.decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        started = [ln[len("START ") :] for ln in out.splitlines() if ln.startswith("START")]
+        where = started[-1] if started else "(hung before the first variant)"
+        pytest.fail(f"build hung on duplicates at the origin; variant in flight: {where}")
+    assert r.returncode == 0, f"rc={r.returncode}\nstdout:\n{r.stdout}\nstderr:\n{r.stderr[-2000:]}"
+    assert "DONE" in r.stdout, f"subprocess stopped early:\n{r.stdout}"
+    for v in BUILD_VARIANTS:
+        assert f"PASS {v}" in r.stdout, f"variant {v} did not complete:\n{r.stdout}"
 
 
 def test_lattice_positions_do_not_warn():
