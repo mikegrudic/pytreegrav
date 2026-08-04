@@ -5,7 +5,7 @@ pytreegrav is a package for computing the gravitational potential and/or field o
 
 # Installation
 
-```pip install pytreegrav``` or clone the repo and run ```python setup.py install``` from the repo directory.
+```pip install pytreegrav```, or clone the repo and run ```pip install .``` (or ```pip install -e .```) from the repo directory.
 
 # Walkthrough
 First let's import the stuff we want and generate some particle positions and masses - these would be your particle data for whatever your problem is.
@@ -202,6 +202,22 @@ print("RMS potential error: ", phi_error)
     RMS force error:  0.0029070938409950310
     RMS potential error:  0.00018373931733379673
 
+# Tidal fields
+
+``TidalTensor`` returns the tidal tensor $T_{ij} = \partial g_i / \partial x_j = -\partial^2 \Phi / \partial x_i \partial x_j$, as a shape ``(N,3,3)`` array. In this convention $T_{ij} \delta x_j$ is the relative tidal acceleration of a neighbour at small separation $\delta x$, so positive eigenvalues are stretching and negative ones compressive, and $\mathrm{tr}\,T = -4\pi G \rho$ (exactly zero wherever no softening kernel overlaps the evaluation point). All the usual options apply — ``method``, ``parallel``, ``theta``, ``quadrupole``, ``tree``, and a ``TidalTensorTarget`` for evaluating at separate points:
+
+```python
+from pytreegrav import TidalTensor, TidalTensorTarget
+
+T = TidalTensor(x, m, h, theta=0.4, quadrupole=True, parallel=True)  # shape (N,3,3)
+T_target = TidalTensorTarget(x_target, x, m, softening_source=h, parallel=True)
+
+eigenvalues = np.linalg.eigvalsh(T)  # ascending; use eigh if you want the principal axes too
+compressive = (eigenvalues < 0).all(axis=1)  # fully compressive tides
+```
+
+Note that the tidal tensor is one derivative higher than the acceleration, so at a given ``theta`` its fractional error is correspondingly larger. Use a smaller ``theta`` than you would for forces and turn on ``quadrupole``; on a uniform box of $10^5$ particles that costs 0.14 s against 0.04 s for the monopole walk at ``theta=0.7``.
+
 # Ray-tracing
 
 pytreegrav's octree implementation can be used for efficient tree-based searches for ray-tracing of unstructured data. Currently implemented is the method ``ColumnDensity``, which calculates the integral of the density field to infinity along a grid of rays originating at each particle (defaulting to 6 rays). For example:
@@ -219,17 +235,52 @@ columns_custom = ColumnDensity(x, m, h, rays=np.random.normal(size=(100,3)), par
 NH_eff = Σ_eff X_H / m_p  # column density in H nuclei code length^-2
 ```
 
-## GPU-accelerated ray-tracing (optional)
+# GPU acceleration (optional)
 
-The ray-traced path has an optional CUDA backend. On an RTX A6000 against 32 Xeon Gold 6244 threads it
-is **12.3x** faster on a real astrophysical snapshot (22.3M gas particles, 6 rays, 134M walks: 52 s against
-638 s). Clustered data is the harder case: a warp can hold both dense-core and diffuse-gas sightlines, so
-lanes wait on each other, and the tree no longer fits in cache — smooth synthetic clouds do better, so
-take this as the figure to expect on production data.
+Column density, monopole tree gravity and brute-force gravity all have an optional CUDA backend, reached
+with the same `device="cuda"` flag. Measured on an RTX A6000 against 32 Xeon Gold 6244 threads, on a real
+astrophysical snapshot (22.3M gas particles):
 
-It is single precision, and on real data the error grows with the number of contributions summed
-along a sightline, so it is a distribution rather than one number. Measured over 1.2M sightlines of
-that snapshot, against the same walk in float64:
+| quantity | CPU, 32 threads | `device="cuda"` | speedup | tree resident | speedup |
+| --- | --- | --- | --- | --- | --- |
+| `ColumnDensity`, 6 rays (134M walks) | 639 s | 56.8 s | **11.3x** | 52.7 s | **12.1x** |
+| monopole `Potential` | 18.4 s | 4.8 s | **3.8x** | 0.58 s | **31.7x** |
+| monopole `Accel` | 20.7 s | 5.2 s | **3.9x** | 0.65 s | **31.6x** |
+| brute force, pair rate | ~10 Gpair/s | 387 Gpair/s | **~40x** | | |
+
+The two GPU columns differ by what each call has to redo. `device="cuda"` is a *complete* one-shot solve:
+Morton-order the targets, narrow them to float32, pack and upload the tree, launch, copy back. The tree
+column is a `pytreegrav.cuda.CudaPotential`/`CudaAccel`/`CudaColumnDensity` context, which pays a one-time
+0.3-0.4 s pack-and-upload and then only launches. Gravity is where the distinction bites: the walk itself is
+under a second, so a single call is dominated by everything around it, and holding a context is worth 8x
+more than the flag. Column density does enough work per call that it barely matters.
+
+```
+pip install pytreegrav[cuda]     # adds numba-cuda; nothing changes for CPU-only users
+```
+
+`pytreegrav.cuda` is never imported by the package itself, so a CPU-only install is unaffected. All of it
+is single precision — see the per-quantity accuracy notes below. Below N ≈ 5e3 the GPU is *slower* than 32
+CPU threads for any of these: a kernel launch plus a tree upload is not worth amortizing over that little
+work. See `examples/benchmark_scaling.py --cuda` and
+[examples/benchmark_scaling_cuda.png](examples/benchmark_scaling_cuda.png).
+
+Clustered data is the harder case throughout: a warp can hold both dense-core and diffuse sightlines, so
+lanes wait on each other, and the tree no longer fits in cache. Smooth synthetic clouds do better, so the
+figures above are the ones to expect on production data.
+
+## Column density
+
+```python
+columns = ColumnDensity(x, m, h, rays=6, device="cuda")  # single shot; repacks and uploads each call
+```
+
+Only the ray-traced path is supported: pass `rays`, and leave `randomize_rays` off. The 6-bin angular
+estimator (`rays=None`) has no GPU path.
+
+On real data the error grows with the number of contributions summed along a sightline, so it is a
+distribution rather than one number. Measured over 1.2M sightlines of that snapshot, against the same walk
+in float64:
 
 | median | p99 | p99.9 | p99.99 | max |
 | --- | --- | --- | --- | --- |
@@ -241,17 +292,8 @@ this is comfortably below the error of the uniform-sphere density model itself. 
 agrees with direct summation to ~1e-15, so the two are not interchangeable if you need reproducible
 digits.
 
-```
-pip install pytreegrav[cuda]     # adds numba-cuda; nothing changes for CPU-only users
-```
-
-```python
-columns = ColumnDensity(x, m, h, rays=6, device="cuda")  # single shot; repacks and uploads each call
-```
-
-The tree upload is the fixed cost (~180 ms for a 1e6-particle tree, against ~500 ms for a 6-ray
-pass), so for repeated evaluation — many ray grids, target subsets, or timesteps — hold a context
-and reuse it:
+The pack-and-upload of the tree is a rounding error here (0.39 s against a 53 s pass), but for repeated
+evaluation — many ray grids, target subsets, or timesteps — hold a context and reuse it:
 
 ```python
 from pytreegrav.cuda import CudaColumnDensity
@@ -259,25 +301,43 @@ ctx = CudaColumnDensity(tree)                 # pack + upload once
 columns = ctx(pos, rays)                      # per-call transfers are ~2% of runtime
 ```
 
-Monopole gravity has the same flag:
+## Tree gravity
+
+Monopole only:
 
 ```python
 phi = Potential(x, m, h, theta=0.7, device="cuda")   # or Accel(...)
 ```
 
-Gravity walks are short — under 0.1 µs/particle on the device — so the one-off tree upload dominates a
-single call. On that snapshot, reusing a `CudaPotential`/`CudaAccel` context gives **20.9x** and
-**21.4x** (0.91 s and 0.99 s against 19 s and 21 s on 32 threads); the single-shot flag above, which
-packs and uploads the tree every call (0.43 s at this N), gives **14.2x** and **14.9x**.
+Gravity walks are short — under 0.03 µs/particle on the device — so a stateless call spends most of its
+time reordering targets and uploading the tree rather than walking. On that snapshot, reusing a
+`CudaPotential`/`CudaAccel` context gives **31.7x** and **31.6x** (0.58 s and 0.65 s against 18.4 s and
+20.7 s on 32 threads); the single-shot flag above gives **3.8x** and **3.9x**.
+
+Because the walk is so short, holding a context matters much more here than it does for column density:
+
+```python
+from pytreegrav.cuda import CudaPotential, CudaAccel
+ctx = CudaPotential(tree)                     # pack + upload once
+phi = ctx(pos, softening, G=1.0, theta=0.7)   # theta is per-call, so one upload serves any opening angle
+```
 
 Measured float32 error against the *same, ungrouped* walk in float64 — the algorithm the device actually
-runs: potential 1.3e-7 median / 7.5e-6 worst, acceleration 2.0e-9 / 1.9e-4. Diffing against the *default*
-CPU path instead gives 1.8e-5 / 2.7e-3 and 4.9e-6 / 5.4e-3, two orders of magnitude larger — but that is
-the CPU's target grouping opening a superset of nodes, not precision: both sets of numbers are unchanged
-if the device kernels are compiled in float64.
+runs — over all 2.2e7 particles of that snapshot, normalised as elsewhere here by `rms|a|` and by
+`std(phi)`: potential 1.0e-6 median / 6.2e-6 p99, acceleration 4.3e-8 / 1.3e-5, three to five orders below
+the opening angle's own ~2e-3. Diffing against the *default* CPU path instead gives 1.4e-4 and 9.9e-5
+medians, 100–2000x larger — but that is the CPU's target grouping opening a superset of nodes, not
+precision: compiling the device kernels in float64 barely moves either pair.
 
-Brute force takes the flag too, and it is where the GPU is at its best — no traversal, no divergence,
-pure arithmetic:
+Quote the normalisation with the number, particularly for the acceleration. This snapshot has
+`max|a| / rms|a| = 716`, so dividing by `max|a|` reports that same 9.9e-5 median as 1.4e-7, and
+per-particle relative error reports it as 2.2e-3 — it diverges wherever `|a| → 0` at force balance, which
+says nothing about the kernel. See [the CUDA docs](https://pytreegrav.readthedocs.io/en/latest/cuda_API.html)
+for the full table.
+
+## Brute force
+
+This is where the GPU is at its best — no traversal, no divergence, pure arithmetic:
 
 ```python
 phi = Potential(x, m, h, method="bruteforce", device="cuda")
@@ -288,14 +348,6 @@ exact, the useful consequence is where the crossover moves: on the GPU it stays 
 out to N ≈ 1e5, against N ≈ 7e3 on 32 CPU threads — a much wider range in which you can skip the
 approximation entirely. Its error is float32 accumulation and nothing else (no `theta`, so no tail),
 growing as √N: 2.4e-6 at N = 1e3, 5.1e-5 at N = 6e4.
-
-Below N ≈ 5e3 the GPU is *slower* than 32 CPU threads for either method — a launch plus an upload is not
-worth amortizing over that little work. See `examples/benchmark_scaling.py --cuda` and
-[examples/benchmark_scaling_cuda.png](examples/benchmark_scaling_cuda.png).
-
-`pytreegrav.cuda` is never imported by the package itself, so a CPU-only install is unaffected. For
-column density it applies to the ray-traced path only (`rays` given, `randomize_rays` off), not the
-6-bin estimator; for gravity, to the monopole tree and to brute force.
 
 # Community
 

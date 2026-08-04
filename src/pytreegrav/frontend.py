@@ -5,7 +5,12 @@ from .kernel import *
 from .octree import *
 from .dynamic_tree import *
 from .treewalk import *
-from .grouped_treewalk import AccelTarget_grouped, PotentialTarget_grouped, _morton_order
+from .grouped_treewalk import (
+    AccelTarget_grouped,
+    PotentialTarget_grouped,
+    TidalTensorTarget_grouped,
+    _morton_order,
+)
 from .bruteforce import *
 from .bruteforce_symmetric import Potential_bruteforce_symmetric, Accel_bruteforce_symmetric, SYMMETRIC_NMIN
 from .misc import *
@@ -180,7 +185,7 @@ def Potential(
         Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
 
     device: str, optional
-        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call; for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
+        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call, which for gravity costs more than the walk does -- measured ~4x faster than 32 CPU threads at N=2.2e7, against ~32x with the tree already resident -- so for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
 
     Returns
     -------
@@ -274,7 +279,12 @@ def Potential(
             )
 
         # now reorder phi back to the order of the input positions
-        phi = np.take(phi, idx.argsort())
+        # Scatter back rather than np.take(phi, idx.argsort()): inverting a permutation by sorting it
+        # is O(N log N) for what a scatter does in O(N), and idx is a permutation by construction.
+        # Bit-identical; worth 0.65 s of a 5.5 s device='cuda' call at N=2.2e7 on a Xeon Gold 6244.
+        out = np.empty_like(phi)
+        out[idx] = phi
+        phi = out
 
     if return_tree:
         return phi, tree
@@ -451,7 +461,7 @@ def Accel(
         Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
 
     device: str, optional
-        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call; for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
+        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call, which for gravity costs more than the walk does -- measured ~4x faster than 32 CPU threads at N=2.2e7, against ~32x with the tree already resident -- so for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
 
     Returns
     -------
@@ -539,7 +549,9 @@ def Accel(
             )
 
         # now g is in the tree-order: reorder it back to the original order
-        g = np.take(g, idx.argsort(), axis=0)
+        out = np.empty_like(g)  # scatter, not argsort; see the note in Potential
+        out[idx] = g
+        g = out
 
     if return_tree:
         return g, tree
@@ -670,6 +682,222 @@ def AccelTarget(
         return g, tree
     else:
         return g
+
+
+def TidalTensor(
+    pos,
+    m,
+    softening=None,
+    G=1.0,
+    theta=0.7,
+    tree=None,
+    return_tree=False,
+    parallel=False,
+    method="adaptive",
+    quadrupole=False,
+    group_size=8,
+):
+    """Tidal tensor calculation
+
+    Returns the tidal tensor T_ij = dg_i/dx_j = -d^2 phi/(dx_i dx_j) for a set of particles with positions pos and masses m, at the positions of those particles, using either brute force or tree-based methods depending on the number of particles.
+
+    In this convention the relative tidal acceleration of a neighbour at small separation dx is T_ij dx_j, positive eigenvalues are stretching and negative ones compressive, and the trace is -4 pi G rho: exactly zero wherever no softening kernel overlaps the evaluation point.
+
+    Parameters
+    ----------
+    pos: array_like
+        shape (N,3) array of particle positions
+    m: array_like
+        shape (N,) array of particle masses
+    softening: None or array_like, optional
+        shape (N,) array containing kernel support radii for gravitational softening - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default
+    G: float, optional
+        gravitational constant (default 1.0)
+    theta: float, optional
+        cell opening angle used to control accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. The tidal tensor is one derivative higher than the acceleration, so its fractional error at fixed theta is correspondingly larger - use a smaller theta than you would for forces, and quadrupole=True. (default 0.7)
+    parallel: bool, optional
+        If True, will parallelize the summation over all available cores. (default False)
+    tree: Octree, optional
+        optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)
+    return_tree: bool, optional
+        return the tree used for future use (default False)
+    method: str, optional
+        Which summation method to use: 'adaptive', 'tree', or 'bruteforce' (default adaptive tries to pick the faster choice)
+    quadrupole: bool, optional
+        Whether to use quadrupole moments in tree summation (default False)
+    group_size: int, optional
+        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8). 1 reproduces the per-particle walk. Only affects the tree method.
+
+    Returns
+    -------
+    T: array_like
+        shape (N,3,3) array of tidal tensors at the particle positions
+    """
+
+    ## test if method is correct, otherwise raise a ValueError
+    valueTestMethod(method)
+
+    # coerce up front so every method sees the same thing -- see the note in Accel
+    pos = np.atleast_2d(_f64(pos))
+    m = np.atleast_1d(_f64(m))
+    if softening is None:
+        softening = np.zeros_like(m)
+    softening = np.atleast_1d(_f64(softening))
+
+    # figure out which method to use
+    if method == "adaptive":
+        # see the method-selection note in Potential
+        if tree is not None or len(pos) > (4000 if parallel else 1000):
+            method = "tree"
+        else:
+            method = "bruteforce"
+
+    if method == "bruteforce":  # we're using brute force
+        if parallel:
+            T = TidalTensor_bruteforce_parallel(pos, m, softening, G=G)
+        else:
+            T = TidalTensor_bruteforce(pos, m, softening, G=G)
+        if return_tree:
+            tree = None
+    else:  # we're using the tree algorithm
+        if tree is None:
+            tree = ConstructTree(pos, m, softening, quadrupole=quadrupole)  # build the tree if needed
+            idx = tree.TreewalkIndices  # built from pos, so its walk order already indexes pos
+        else:
+            idx = _morton_order(pos)  # see the sorting note in Accel
+        checkTreeQuadrupoles(tree, quadrupole)
+
+        # sort by the order they appear in the treewalk to improve access pattern efficiency
+        T = TidalTensorTarget_grouped(
+            np.take(pos, idx, axis=0),
+            np.take(softening, idx),
+            tree,
+            group_size=group_size,
+            G=G,
+            theta=theta,
+            quadrupole=quadrupole,
+            parallel=parallel,
+        )
+        out = np.empty_like(T)  # back to the original order; scatter, not argsort, per Potential
+        out[idx] = T
+        T = out
+
+    if return_tree:
+        return T, tree
+    else:
+        return T
+
+
+def TidalTensorTarget(
+    pos_target,
+    pos_source,
+    m_source,
+    softening_target=None,
+    softening_source=None,
+    G=1.0,
+    theta=0.7,
+    tree=None,
+    return_tree=False,
+    parallel=False,
+    method="adaptive",
+    quadrupole=False,
+    group_size=8,
+):
+    """Tidal tensor calculation for general N+M body case
+
+    Returns the tidal tensor T_ij = dg_i/dx_j = -d^2 phi/(dx_i dx_j) sourced by a set of M particles with positions pos_source and masses m_source, at the positions of a set of N particles that need not be the same. See :func:`TidalTensor` for the sign convention.
+
+    Parameters
+    ----------
+    pos_target: array_like
+        shape (N,3) array of target particle positions where you want to know the tidal tensor
+    pos_source: array_like
+        shape (M,3) array of source particle positions (positions of particles sourcing the gravitational field)
+    m_source: array_like
+        shape (M,) array of source particle masses
+    softening_target: array_like or None, optional
+        shape (N,) array of target particle softening radii - these give the radius of compact support of the M4 cubic spline mass distribution
+    softening_source: array_like or None, optional
+        shape (M,) array of source particle radii - these give the radius of compact support of the M4 cubic spline mass distribution
+    G: float, optional
+        gravitational constant (default 1.0)
+    theta: float, optional
+        cell opening angle used to control accuracy; see the note in :func:`TidalTensor` (default 0.7)
+    parallel: bool, optional
+        If True, will parallelize the summation over all available cores. (default False)
+    tree: Octree, optional
+        optional pre-generated Octree of the sources (default None)
+    return_tree: bool, optional
+        return the tree used for future use (default False)
+    method: str, optional
+        Which summation method to use: 'adaptive', 'tree', or 'bruteforce' (default adaptive tries to pick the faster choice)
+    quadrupole: bool, optional
+        Whether to use quadrupole moments in tree summation (default False)
+    group_size: int, optional
+        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8). 1 reproduces the per-particle walk. Only affects the tree method.
+
+    Returns
+    -------
+    T: array_like
+        shape (N,3,3) array of tidal tensors at the target positions
+    """
+
+    ## test if method is correct, otherwise raise a ValueError
+    valueTestMethod(method)
+
+    ## allow user to pass in tree without passing in source pos and m
+    ##  but catch if they don't pass in the tree.
+    if tree is None and (pos_source is None or m_source is None):
+        raise ValueError("Must pass either pos_source & m_source or source tree.")
+
+    pos_target = np.atleast_2d(_f64(pos_target))
+    if softening_target is None:
+        softening_target = zeros(len(pos_target))
+    softening_target = np.atleast_1d(_f64(softening_target))
+    if pos_source is not None:
+        pos_source = np.atleast_2d(_f64(pos_source))
+        m_source = np.atleast_1d(_f64(m_source))
+        if softening_source is None:
+            softening_source = np.zeros_like(m_source)
+        softening_source = np.atleast_1d(_f64(softening_source))
+
+    # figure out which method to use
+    if method == "adaptive":
+        if pos_source is None or len(pos_target) * len(pos_source) > 10**6:
+            method = "tree"
+        else:
+            method = "bruteforce"
+
+    if method == "bruteforce":  # we're using brute force
+        kernel = TidalTensorTarget_bruteforce_parallel if parallel else TidalTensorTarget_bruteforce
+        T = kernel(pos_target, softening_target, pos_source, m_source, softening_source, G=G)
+        if return_tree:
+            tree = None
+    else:  # we're using the tree algorithm
+        if tree is None:
+            tree = ConstructTree(
+                pos_source, m_source, softening_source, quadrupole=quadrupole
+            )  # build the tree if needed
+        checkTreeQuadrupoles(tree, quadrupole)
+        # external targets are not spatially ordered; Morton-sort them so grouping is effective
+        tsort = _morton_order(pos_target)
+        T_sorted = TidalTensorTarget_grouped(
+            pos_target[tsort],
+            softening_target[tsort],
+            tree,
+            group_size=group_size,
+            G=G,
+            theta=theta,
+            quadrupole=quadrupole,
+            parallel=parallel,
+        )
+        T = np.empty_like(T_sorted)
+        T[tsort] = T_sorted  # undo the Morton permutation
+
+    if return_tree:
+        return T, tree
+    else:
+        return T
 
 
 def DensityCorrFunc(

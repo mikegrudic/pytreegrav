@@ -12,34 +12,42 @@ particles (33.5M nodes):
 
    * - problem
      - CPU 32t
-     - CUDA
      - context reused
-     - single call
+     - speedup
+     - one ``device="cuda"`` call
+     - speedup
    * - ``ColumnDensity``, 6 rays (134M walks)
-     - 638 s
-     - 52 s
-     - **12.3x**
-     - 12.2x
+     - 639 s
+     - 52.7 s
+     - **12.1x**
+     - 56.8 s
+     - **11.3x**
    * - monopole ``Potential``
-     - 19.0 s
-     - 0.91 s
-     - **20.9x**
-     - 14.2x
+     - 18.4 s
+     - 0.58 s
+     - **31.7x**
+     - 4.8 s
+     - **3.8x**
    * - monopole ``Accel``
-     - 21.1 s
-     - 0.99 s
-     - **21.4x**
-     - 14.9x
+     - 20.7 s
+     - 0.65 s
+     - **31.6x**
+     - 5.2 s
+     - **3.9x**
    * - brute force, pair rate at :math:`N = 2.6 \times 10^5`
      - ~10 Gpair/s
      - 387 Gpair/s
      - **~40x**
      - --
+     - --
 
-The two columns differ by the one-off pack-and-upload of the tree, 0.43 s for gravity and 0.54 s here:
-0.12 s to build the packed rows and the rest PCIe. It is negligible against a 52 s column-density pass and
-a third of a 0.9 s gravity walk, which is why gravity in particular still wants a held context. (The
-*first* large device allocation in a process costs an extra ~0.6 s on top, once.)
+The two speedup columns differ by everything a stateless call has to redo, which is more than the upload:
+Morton-ordering the targets, narrowing them to float32, packing and uploading the tree (0.3-0.4 s, of which
+0.13 s builds the packed rows and the rest is PCIe), then scattering the result back. Against a 53 s
+column-density pass that is noise; against a 0.58 s gravity walk it is the entire cost, which is why
+gravity in particular wants a held context -- an 8x difference. The context figures assume you keep the
+targets in float32, as a caller evaluating repeatedly would. (The *first* large device allocation in a
+process costs an extra ~0.6 s on top, once.)
 
 Clustered structure is the harder case for a GPU: a warp can hold both dense-core and diffuse-gas
 sightlines at once, so lanes wait on each other, and the packed tree is over 1 GB against a 6 MB L2.
@@ -97,7 +105,7 @@ Pass :code:`device="cuda"` to :func:`~pytreegrav.frontend.ColumnDensity`:
 
     columns = ColumnDensity(x, m, h, rays=6, device="cuda")
 
-This repacks and uploads the tree on every call, which for column density is a rounding error: 0.54 s
+This repacks and uploads the tree on every call, which for column density is a rounding error: 0.39 s
 against a 52 s pass at :math:`N = 2.2 \times 10^7`. Holding a context is worth much more for gravity,
 whose walks are short enough for that fixed cost to matter.
 
@@ -152,12 +160,15 @@ N-body step, or a binding-energy sweep over many candidate groups:
 ``theta`` is a per-call argument rather than baked into the packed tree, so one upload serves any
 opening angle.
 
-Hold the context if you can. Gravity walks are short -- under 0.1 us per particle on the device -- so the
-one-off pack-and-upload is a third of a single call: on the snapshot above, 20.9x with the context reused
-against 14.2x for a bare ``Potential(..., device="cuda")``.
+Hold the context if you can. Gravity walks are short -- under 0.03 us per particle on the device -- so a
+stateless call spends most of its time reordering and uploading rather than walking: on the snapshot above,
+31.7x with the context reused against 3.8x for a bare ``Potential(..., device="cuda")``.
 
 Accuracy on that snapshot, against two different CPU references, because the choice matters more than
-the precision does:
+the precision does. Errors are :math:`|\Delta|` over the whole snapshot's :math:`2.2 \times 10^7`
+particles, normalised as elsewhere in these docs -- by :math:`\mathrm{rms}|a|` for the acceleration and
+by :math:`\mathrm{std}(\phi)` for the potential, whose zero point is arbitrary -- so they are directly
+comparable to the :math:`\theta` truncation error quoted the same way (~2e-3 RMS at 0.7):
 
 .. list-table::
    :header-rows: 1
@@ -169,30 +180,38 @@ the precision does:
      - max
    * - potential
      - same walk, ungrouped
-     - 1.3e-7
-     - 8.3e-7
-     - 7.5e-6
+     - 1.0e-6
+     - 6.2e-6
+     - 1.2e-2
    * - acceleration
      - same walk, ungrouped
-     - 2.0e-9
-     - 8.6e-7
-     - 1.9e-4
+     - 4.3e-8
+     - 1.3e-5
+     - 1.2e1
    * - potential
      - grouped CPU default
-     - 1.8e-5
-     - 7.5e-4
-     - 2.7e-3
+     - 1.4e-4
+     - 5.7e-3
+     - 3.1e-2
    * - acceleration
      - grouped CPU default
-     - 4.9e-6
-     - 2.6e-4
-     - 5.4e-3
+     - 9.9e-5
+     - 3.6e-3
+     - 1.2e1
 
 The first two rows are float32 and nothing else: they compare against the *ungrouped* walk, which is the
-algorithm the device actually runs. The last two are what you see if you diff ``device="cuda"`` against
-the default CPU path, and they are two orders of magnitude larger -- because the CPU groups targets and so
-opens a superset of nodes, a difference in the approximation rather than in the arithmetic. All four rows
-are unchanged if the device kernels are compiled in float64, which is what establishes that.
+algorithm the device actually runs, and sit three to five orders of magnitude below the opening angle's
+own error. The last two are what you see if you diff ``device="cuda"`` against the default CPU path, and
+they are 100x to 2000x larger -- because the CPU groups targets and so opens a superset of nodes, a
+difference in the approximation rather than in the arithmetic. Compiling the device kernels in float64
+barely moves either pair, which is what establishes that.
+
+Mind the normalisation, especially for the acceleration, where the choice moves the answer by four
+orders of magnitude: this snapshot has :math:`\max|a| / \mathrm{rms}|a| = 716`, so dividing by
+:math:`\max|a|` instead gives a median of 1.4e-7 rather than 9.9e-5. The max column is likewise one
+particle, not a typical one -- an absolute error of :math:`12\,\mathrm{rms}|a|` is only 1.7% of
+:math:`\max|a|`. Per-particle relative error is the one to avoid for a force, since it diverges wherever
+:math:`|a| \to 0` at force balance and reports 1.1 at worst while saying nothing about the kernel.
 
 The residual tail in the first two rows is the acceptance test flipping for a node sitting on the
 opening-angle boundary, which changes the answer by that node's own truncation error -- so it is bounded

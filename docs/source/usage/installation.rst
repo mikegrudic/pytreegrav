@@ -8,12 +8,15 @@ The below will help you quickly install pytreegrav.
 Requirements
 ------------
 
-You will need a working Python 3.x installation; we recommend installing `Anaconda <https://www.anaconda.com/download/>`_ Python version 3.x.
-You will also need to install the following packages:
+You will need Python 3.8 or newer. That floor comes from numba rather than from pytreegrav itself:
+the package needs ``numba >= 0.57`` for :code:`parallel_chunksize`, and the oldest numba meeting that
+requires Python 3.8. ``pip`` installs the rest for you:
 
     * numpy
 
-    * numba
+    * numba >= 0.57
+
+    * scipy
 
 Installing the latest stable release
 ------------------------------------
@@ -45,25 +48,18 @@ by executing
 
 .. code-block:: bash
 
-    python setup.py install
+    pip install .
 
-or
+or, if you want your edits to the source to take effect without reinstalling,
 
 .. code-block:: bash
 
     pip install -e .
 
-in the top level directory. The required Python packages will automatically be 
+in the top level directory. The required Python packages will automatically be
 installed as well.
 
-You can test your installation by looking for the pytreegrav 
-executable built by the installation
-
-.. code-block:: bash
-
-    which pytreegrav
-
-and by importing the pytreegrav Python frontend in Python
+You can test your installation by importing the pytreegrav Python frontend in Python
 
 .. code-block:: python
 
@@ -72,8 +68,10 @@ and by importing the pytreegrav Python frontend in Python
 Optional: GPU acceleration
 --------------------------
 
-Column density, monopole tree gravity and brute-force gravity have an optional CUDA backend -- roughly
-12x, 21x and 40x faster than the parallel CPU paths on clustered production data. Install the extra with
+Column density, monopole tree gravity and brute-force gravity have an optional CUDA backend. On clustered
+production data, against 32 CPU threads: column density ~11x from a single ``device="cuda"`` call, gravity
+~4x that way but ~32x with the tree held resident on the device, and ~40x for brute force. Install the
+extra with
 
 .. code-block:: bash
 

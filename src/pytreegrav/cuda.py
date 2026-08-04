@@ -8,7 +8,7 @@ Deliberately not imported by ``pytreegrav/__init__.py``, so ``import pytreegrav`
 
 or pass ``device="cuda"`` to ColumnDensity/Potential/Accel, which uploads on every call.
 
-On an RTX A6000 against the grouped CPU walks on 32 Xeon Gold 6244 threads, on a clustered 22.3M-particle astrophysical snapshot: ~12x for 6-ray column density, ~21x for monopole gravity with the context reused (~15x single-shot, a gravity walk being short enough that the pack-and-upload is a third of one call), and 387 Gpair/s brute force against roughly 10.  Clustered data is the harder case -- very unequal walks in one warp, and a 6 MB L2 -- so expect these figures rather than the better ones smooth synthetic clouds give.
+On a power-capped RTX A6000 against the grouped CPU walks on 32 Xeon Gold 6244 threads, on a clustered 22.3M-particle astrophysical snapshot: 6-ray column density 639 s -> 52.7 s (~12x), monopole potential 18.4 s -> 0.58 s and acceleration 20.7 s -> 0.65 s (~32x), and 387 Gpair/s brute force against roughly 10.  Those hold the context; a one-shot ``device="cuda"`` call is the same for column density (~11x) but only ~4x for gravity, whose walk is short enough that Morton-ordering the targets, narrowing them, and packing and uploading the tree dominate it.  Clustered data is the harder case -- very unequal walks in one warp, and a 6 MB L2 -- so expect these figures rather than the better ones smooth synthetic clouds give.
 
 All three give each thread one independent stackless cursor, its whole state a single integer threaded through NextBranch/FirstSubnode: no warp intrinsics, and none of the local memory a per-thread traversal stack would need.  Grouping is left to the warp, since 32 Morton-adjacent targets hold the same node index for most of the descent and the row fetch broadcasts -- the amortization the CPU's grouped walks buy by hand, without the acceptance-radius padding they pay for it.
 
@@ -174,7 +174,11 @@ def _make_column_walk(cuda_target):
             s3 = nodes[no, 3]
             if no < npart:  # leaf: h^2 in slot 3
                 if pp2 < s3:
-                    chord = sqrt(ONE - pp2 * nodes[no, 6])
+                    # Clamped because pp2 < h^2 does not imply pp2 * (1/h^2) <= 1: slots 3 and 6 round
+                    # to float32 independently, and fastmath's FMA keeps their product exact rather
+                    # than rounding it back to 1, so the radicand can go an ulp negative.  4 NaNs in
+                    # 18M walks before this; a grazing ray has zero chord anyway.
+                    chord = sqrt(max(ZERO, ONE - pp2 * nodes[no, 6]))
                     if r2 > s3:  # target outside the sphere: the whole chord, if it lies ahead
                         if z > ZERO:
                             col += nodes[no, 5] * TWO * chord
@@ -282,11 +286,16 @@ class CudaColumnDensity:
 # --------------------------------------------------------------------------------------------------
 # Gravity.  Same stackless per-target walk, monopole only.
 #
-# float32 is safe here, measured not assumed.  Measured error against the float64 walk on a clustered
-# production snapshot: potential 5.5e-08 median / 1.2e-03 worst, accel 5.7e-07 / 5.3e-03.  The tail is not
-# roundoff -- it is the acceptance test flipping for a node on the opening-angle boundary, so it is
-# bounded by theta's own ~2e-03 truncation error rather than by epsilon.  Potential fares better
-# because every term shares a sign (no cancellation); accel's is a vector residual.
+# float32 is safe here, measured not assumed -- but always say which normalization, because for the
+# acceleration the choice moves the answer by 1e4 and that has caused confusion here before.  Normalizing
+# as the docs do, by rms|a| and by std(phi), on a clustered 22.3M-particle snapshot: against the same walk
+# ungrouped, which is what the device actually runs, potential is 1.0e-06 median / 6.2e-06 p99 and accel
+# 4.3e-08 / 1.3e-05 -- three to five orders below theta's own ~2e-03.  Against the grouped CPU default it
+# is 100-2000x that (1.4e-04 and 9.9e-05 median), which is grouping opening a superset of nodes rather
+# than arithmetic.  Dividing by max|a| instead would report 1.4e-07 for that same accel median, since this
+# snapshot has max|a|/rms|a| = 716; per-particle relative error is worse still for a force, diverging
+# wherever |a| -> 0 at force balance.  The tail is the acceptance test flipping for a node on the
+# opening-angle boundary, so it is bounded by theta's truncation error rather than by epsilon.
 #
 # Row layout, 8 float32 = 32 B:
 #   0,1,2  centre of mass    3  mass    4  softening    5  size    6  delta    7  pad

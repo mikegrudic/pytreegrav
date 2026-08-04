@@ -237,3 +237,31 @@ def test_importing_pytreegrav_does_not_require_cuda():
     r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=300, check=False)
     assert r.returncode == 0, f"plain import of pytreegrav touched CUDA: {r.stdout}{r.stderr[-2000:]}"
     assert "OK" in r.stdout
+
+
+@needs_cuda
+def test_grazing_ray_does_not_produce_nan():
+    """A ray passing within one float32 ulp of a sphere's edge must not yield NaN.
+
+    Slots 3 (h^2) and 6 (1/h^2) are rounded to float32 independently, so ``pp2 < s3`` does not imply
+    ``pp2 * inv <= 1``; fastmath contracts ``1 - pp2*inv`` into an FMA, which keeps the product exact
+    rather than rounding it back to 1, so the radicand goes slightly negative and sqrt returns NaN.
+    Unfixed this gave 2158 NaNs of the 4000 targets below (and 4 in 18M walks on real data).
+
+    The construction is exact, not statistical: this h is one for which ``nextafter(s3,0) * inv > 1``,
+    x is pinned just under the sphere radius, and the small y dithers pp2 onto that one bad ulp --
+    which varying a single coordinate cannot do, since squaring it advances two ulps at a time.
+    """
+    h = float.fromhex("0x1.ff79b7e5bbe0cp+1")  # 3.9959020492312955
+    n = 4000
+    x0 = np.float64(np.float32(3.995901823))
+    y = np.linspace(6.91e-4, 1.19e-3, n)
+
+    tree = ConstructTree(np.array([[0.0, 0.0, 0.0]]), np.array([1.0]), np.array([h]))
+    tgt = np.ascontiguousarray(np.column_stack([np.full(n, x0), y, np.full(n, -40.0)]))
+    ray = np.ascontiguousarray(np.array([[0.0, 0.0, 1.0]]))
+    gpu = ColumnDensity(tgt, np.ones(n), np.zeros(n), rays=ray, tree=tree, device="cuda")
+    cpu = ColumnDensity(tgt, np.ones(n), np.zeros(n), rays=ray, tree=tree, parallel=True)
+    assert np.isfinite(cpu).all()  # the float64 path was never affected; guards the construction
+    nbad = int((~np.isfinite(gpu)).sum())
+    assert nbad == 0, f"{nbad} of {n} grazing rays gave a non-finite column density"
