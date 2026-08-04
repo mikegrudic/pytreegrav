@@ -221,10 +221,25 @@ NH_eff = Σ_eff X_H / m_p  # column density in H nuclei code length^-2
 
 ## GPU-accelerated ray-tracing (optional)
 
-The ray-traced path has an optional CUDA backend, measured at **11.8x / 15.1x / 18.2x** over the
-parallel CPU walk at N = 1e5 / 1e6 / 3e6 on an RTX A6000 against 32 Xeon Gold 6244 threads. It is
-single precision, so expect ~1e-5 relative error rather than the CPU path's ~1e-15 — far below the
-error of the uniform-sphere density model itself, but not interchangeable with it.
+The ray-traced path has an optional CUDA backend. On an RTX A6000 against 32 Xeon Gold 6244 threads
+it is **7.9x** faster on a real STARFORGE snapshot (24.7M gas particles, 6 rays, 148M walks), and
+11.8–18.2x on smooth synthetic clouds at N = 1e5–3e6. Clustered data is the harder case: a warp can
+hold both dense-core and diffuse-gas sightlines, so lanes wait on each other, and the tree no longer
+fits in cache. Take ~8x as the figure to expect on production data.
+
+It is single precision, and on real data the error grows with the number of contributions summed
+along a sightline, so it is a distribution rather than one number. Measured over 12M sightlines of
+that snapshot, against the float64 CPU result:
+
+| median | p99 | p99.9 | p99.99 | max |
+| --- | --- | --- | --- | --- |
+| 2.0e-6 | 4.4e-5 | 1.7e-4 | 9.1e-4 | 2.5e-2 |
+
+The worst cases are the *densest* sightlines — 0.009% of entries exceed 1e-3, and their median column
+is 240x the overall median. Those are the ones where τ ≫ 1 and the answer is "opaque" regardless, so
+this is comfortably below the error of the uniform-sphere density model itself. But the CPU path
+agrees with direct summation to ~1e-15, so the two are not interchangeable if you need reproducible
+digits.
 
 ```
 pip install pytreegrav[cuda]     # adds numba-cuda; nothing changes for CPU-only users

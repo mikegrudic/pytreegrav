@@ -3,13 +3,52 @@
 GPU-accelerated ray-tracing
 ===========================
 
-The ray-traced column density path has an optional CUDA backend. It is measured at **11.8x / 15.1x /
-18.2x** over the parallel CPU walk at :math:`N = 10^5 / 10^6 / 3 \times 10^6`, on an NVIDIA RTX A6000
-against 32 Xeon Gold 6244 threads.
+The ray-traced column density path has an optional CUDA backend, benchmarked on an NVIDIA RTX A6000
+against 32 Xeon Gold 6244 threads:
 
-It is single precision, so expect a relative error around :math:`10^{-5}` rather than the CPU path's
-:math:`10^{-15}`. That is far below the error of the uniform-sphere density model the estimator is
-built on, but the two are not interchangeable if you need reproducible last digits.
+.. list-table::
+   :header-rows: 1
+
+   * - problem
+     - speedup
+   * - STARFORGE snapshot, 24.7M gas particles, 6 rays (148M walks)
+     - **7.9x**
+   * - smooth synthetic clouds, :math:`N = 10^5` / :math:`10^6` / :math:`3 \times 10^6`
+     - 11.8x / 15.1x / 18.2x
+
+Expect the former on production data. Clustered structure is the harder case for a GPU: a warp can
+hold both dense-core and diffuse-gas sightlines at once, so lanes wait on each other, and at 24.7M
+particles the packed tree is 1.5 GB against a 6 MB L2.
+
+Accuracy
+--------
+
+The kernel is single precision. On real data the error grows with the number of contributions summed
+along a sightline, so it is a distribution rather than a single figure. Measured over 12M sightlines
+of that snapshot against the float64 CPU result:
+
+.. list-table::
+   :header-rows: 1
+
+   * - median
+     - p99
+     - p99.9
+     - p99.99
+     - max
+   * - 2.0e-6
+     - 4.4e-5
+     - 1.7e-4
+     - 9.1e-4
+     - 2.5e-2
+
+The largest errors fall on the *densest* sightlines: 0.009% of entries exceed :math:`10^{-3}`, and
+their median column density is 240x the overall median. Those are precisely the sightlines where
+:math:`\tau \gg 1` and the answer is "opaque" whatever the last digits say, so this sits comfortably
+below the error of the uniform-sphere density model the estimator is built on.
+
+Note the CPU path agrees with direct summation to :math:`\sim 10^{-15}`, so the two are not
+interchangeable if you need reproducible digits. Smooth test problems will understate the spread
+above by three orders of magnitude, because they have almost no dynamic range in column density.
 
 Installation
 ------------

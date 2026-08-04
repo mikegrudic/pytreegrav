@@ -282,9 +282,52 @@ All JIT paths warmed first; `build` and `pack+upload` are one-off per tree.
 | 1e6 | 160 ms | 179 ms | 7643 ms | **507 ms** | **15.1x** | 8.4e-06 |
 | 3e6 | 486 ms | 511 ms | 40659 ms | **2230 ms** | **18.2x** | 8.0e-06 |
 
-**Clears the 10x criterion**, and the margin grows with N -- there is more work to fill 84 SMs with,
-while the CPU is increasingly cache-limited (its cost goes as N^(4/3)). Note the CPU number at N=3e6
-is 41 s, which is the scaling this was meant to attack.
+**Clears the 10x criterion**, and on these smooth clouds the margin grows with N -- more work to fill
+84 SMs, while the CPU is increasingly cache-limited (its cost goes as N^(4/3)). But see the real-data
+section below: this trend does *not* survive contact with clustered structure.
+
+### Real data: 7.9x, not 18x
+
+STARFORGE `v1.0/M2e4_R10_S0_T1_B0.01_Res271_n2_sol0.5_42/output/snapshot_500.hdf5` — 24.7M gas
+particles, 2.47e4 Msun over 100 pc, `h` spanning 1.5e-4 to 1.87 pc:
+
+| | time | per particle |
+| --- | --- | --- |
+| tree build (37.05M nodes) | 4.1 s | |
+| pack + upload (1482 MB) | 4.9 s | |
+| CUDA, 6 rays (148.2M walks) | **106.7 s** | 4.32 us |
+| CPU, 32 threads | **847.2 s** | 34.30 us |
+| | **7.94x** | |
+
+Less than half the synthetic figure. Per-particle GPU cost rose 5.8x from N=3e6 synthetic to N=2.47e7
+real, while the CPU's rose only 2.5x. Two causes, both absent from a Gaussian cloud: the GPU carries a
+2.1 GB working set (1482 MB tree + 593 MB output) against a 6 MB L2, and with 8.7e8 of dynamic range
+in column density a single warp can hold both dense-core and diffuse-gas sightlines, so lanes wait on
+each other. **Quote ~8x for production data, not the synthetic numbers.**
+
+A 2M-target subsample of the same tree gives 13.0x, but that number should be discarded: striding the
+Morton order inflates the CPU grouped walk's group extents, which handicaps the CPU rather than
+revealing anything about the GPU.
+
+Both float32 hazards were checked on this data and are comfortable: `span/h_min` = 6.6e5 against
+float32's ~1.7e7 of resolution, and the largest leaf prefactor `3M/(4 pi h^2)` is 1.05e4 against a
+3.4e38 ceiling, so the packer's overflow guard never fires.
+
+### float32 error on real data is a distribution, not a number
+
+Over 12M nonzero sightlines, against the float64 CPU result:
+
+| median | p99 | p99.9 | p99.99 | max |
+| --- | --- | --- | --- | --- |
+| 1.99e-06 | 4.41e-05 | 1.66e-04 | 9.13e-04 | 2.53e-02 |
+
+It tracks column magnitude — bottom decile max 1.0e-04, top decile max 2.5e-02 — because error
+accumulates with the number of contributions summed (the sqrt(N) growth the brute-force kernel showed
+above). 1,090 of 12M entries (0.0091%) exceed 1e-03; their median column is 5.3e3 against 22.5
+overall, i.e. they are the *densest* sightlines, carrying 2.87% of the total column. Those are exactly
+where tau >> 1 and the answer is "opaque" regardless, so this is harmless in practice — but the smooth
+benchmarks reported ~8e-06 uniformly and understate the tail by three orders of magnitude. Any
+accuracy claim for this kernel should come from data with realistic dynamic range.
 
 Secondary measurements:
 

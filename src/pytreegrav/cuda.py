@@ -10,10 +10,16 @@ uploaded tree::
 
 or take the single-shot path, ``ColumnDensity(..., device="cuda")``, which pays the upload each time.
 
-Measured on an RTX A6000 against the shipped grouped CPU walk on 32 Xeon Gold 6244 threads:
-11.8x / 15.1x / 18.2x at N = 1e5 / 1e6 / 3e6, with float32 error ~8e-06.  The kernel compiles to 38
-registers and zero local memory -- 100% occupancy -- because the walk is stackless: its entire state
-is one integer cursor threaded through NextBranch/FirstSubnode.
+Measured on an RTX A6000 against the shipped grouped CPU walk on 32 Xeon Gold 6244 threads: **7.9x**
+on a real STARFORGE snapshot (24.7M gas particles, 6 rays), and 11.8x / 15.1x / 18.2x on smooth
+synthetic clouds at N = 1e5 / 1e6 / 3e6.  Expect the former; clustered data puts dense-core and
+diffuse-gas sightlines in one warp, so lanes wait on each other, and the 1.5 GB packed tree swamps a
+6 MB L2.  float32 error on that snapshot: 2e-06 median, 9e-04 at p99.99, 2.5e-02 worst, concentrated
+on the densest sightlines -- it grows with the number of contributions summed, so smooth test problems
+understate it by ~3 orders of magnitude.
+
+The kernel compiles to 38 registers and zero local memory -- 100% occupancy -- because the walk is
+stackless: its entire state is one integer cursor threaded through NextBranch/FirstSubnode.
 
 Two things differ deliberately from the CPU walk:
 
