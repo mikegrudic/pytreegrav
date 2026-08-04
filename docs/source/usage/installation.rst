@@ -45,25 +45,18 @@ by executing
 
 .. code-block:: bash
 
-    python setup.py install
+    pip install .
 
-or
+or, if you want your edits to the source to take effect without reinstalling,
 
 .. code-block:: bash
 
     pip install -e .
 
-in the top level directory. The required Python packages will automatically be 
+in the top level directory. The required Python packages will automatically be
 installed as well.
 
-You can test your installation by looking for the pytreegrav 
-executable built by the installation
-
-.. code-block:: bash
-
-    which pytreegrav
-
-and by importing the pytreegrav Python frontend in Python
+You can test your installation by importing the pytreegrav Python frontend in Python
 
 .. code-block:: python
 

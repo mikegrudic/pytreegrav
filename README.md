@@ -5,7 +5,7 @@ pytreegrav is a package for computing the gravitational potential and/or field o
 
 # Installation
 
-```pip install pytreegrav``` or clone the repo and run ```python setup.py install``` from the repo directory.
+```pip install pytreegrav```, or clone the repo and run ```pip install .``` (or ```pip install -e .```) from the repo directory.
 
 # Walkthrough
 First let's import the stuff we want and generate some particle positions and masses - these would be your particle data for whatever your problem is.
