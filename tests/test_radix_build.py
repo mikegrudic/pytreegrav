@@ -6,7 +6,7 @@ import textwrap
 
 import numpy as np
 import pytest
-from pytreegrav.frontend import ConstructTree, AccelTarget, PotentialTarget
+from pytreegrav.frontend import Accel, ConstructTree, AccelTarget, Potential, PotentialTarget
 
 
 def _accel(x, m, h, tree, theta=0.7):
@@ -37,8 +37,8 @@ def test_radix_matches_insertion():
     m = np.ones(N) / N
     h = np.repeat(0.01, N)
 
-    tr = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=True)
-    ti = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=False)
+    tr = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=True)
+    ti = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=False)
 
     ar, ai = _accel(x, m, h, tr), _accel(x, m, h, ti)
     pr, pi = _phi(x, m, h, tr), _phi(x, m, h, ti)
@@ -58,8 +58,8 @@ def test_radix_clustered_growth():
     m = np.ones(len(x)) / len(x)
     h = np.repeat(1e-4, len(x))
 
-    tr = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=True)
-    ti = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=False)
+    tr = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=True)
+    ti = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=False)
     ar, ai = _accel(x, m, h, tr, theta=0.5), _accel(x, m, h, ti, theta=0.5)
     a_rel = np.sqrt(np.mean(np.sum((ar - ai) ** 2, 1))) / np.sqrt(np.mean(np.sum(ar**2, 1)))
     assert a_rel < 1e-10
@@ -74,7 +74,7 @@ def test_radix_coincident_points():
     m = np.ones(len(x)) / len(x)
     h = np.repeat(0.02, len(x))
 
-    tr = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=True)
+    tr = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=True)
     assert np.isclose(tr.Masses[tr.NumParticles], m.sum())
     assert np.array_equal(np.sort(tr.TreewalkIndices), np.arange(len(x)))
 
@@ -88,8 +88,8 @@ def test_radix_rekeying_separation():
     m = np.ones(len(x)) / len(x)
     h = np.repeat(1e-3, len(x))
 
-    tr = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=True)
-    ti = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=False)
+    tr = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=True)
+    ti = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=False)
     assert np.isclose(tr.Sizes[tr.NumParticles], 1.0)  # unit root cube
     assert np.isclose(tr.Masses[tr.NumParticles], m.sum())
     assert np.array_equal(np.sort(tr.TreewalkIndices), np.arange(len(x)))
@@ -105,9 +105,46 @@ def test_radix_tiny_N():
         x = np.random.rand(N, 3)
         m = np.ones(N) / N
         h = np.repeat(0.1, N)
-        t = ConstructTree(np.float64(x), np.float64(m), np.float64(h), radix=True)
+        t = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64), radix=True)
         assert np.isclose(t.Masses[t.NumParticles], m.sum())
         assert np.array_equal(np.sort(t.TreewalkIndices), np.arange(N))
+
+
+@pytest.mark.parametrize("n", [1, 2, 3])
+@pytest.mark.parametrize("method", ["tree", "bruteforce"])
+def test_single_particle_through_the_frontend(n, method):
+    """N=1 must work end to end, and be the analytic answer for a lone softened particle.
+
+    This was broken on numpy < 2.4 (github issue #31): the frontend cast inputs with ``np.float64(a)``,
+    whose *scalar constructor* path triggers for any size-1 array, so a one-particle ``m``/``softening``
+    reached the jitclass as a scalar and the build died in numba type inference. Passing plain lists
+    exercises the coercion too, since a list has no dtype at all.
+    """
+    rng = np.random.default_rng(n)
+    x = rng.random((n, 3))
+    m = np.repeat(1.0 / n, n)
+    h = np.repeat(0.1, n)
+    phi = Potential(x, m, h, method=method)
+    acc = Accel(x, m, h, method=method)
+    assert phi.shape == (n,) and acc.shape == (n, 3)
+    assert np.all(np.isfinite(phi)) and np.all(np.isfinite(acc))
+    if n == 1:
+        # a lone particle feels no force, and its self-potential is excluded
+        assert phi[0] == 0.0
+        assert np.array_equal(acc[0], np.zeros(3))
+    # and again from lists, which have no dtype for np.float64 to preserve
+    assert np.allclose(Potential(x.tolist(), m.tolist(), h.tolist(), method=method), phi)
+
+
+def test_single_particle_tree_is_usable():
+    """ConstructTree must also accept a single particle, including already-collapsed scalar inputs."""
+    tree = ConstructTree(np.array([[0.2, 0.3, 0.4]]), np.array([2.0]), np.array([0.1]))
+    assert tree.NumParticles == 1
+    assert np.isclose(tree.Masses[tree.NumParticles], 2.0)
+    # what np.float64() hands you on numpy < 2.4 for a length-1 array: bare scalars
+    collapsed = ConstructTree(np.array([[0.2, 0.3, 0.4]]), np.float64(2.0), np.float64(0.1))
+    assert collapsed.NumParticles == 1
+    assert np.isclose(collapsed.Masses[collapsed.NumParticles], 2.0)
 
 
 def _walk_particles(tree):
@@ -141,7 +178,7 @@ def test_treewalk_links_reach_every_particle_once():
         x = rng.random((n, 3))
         m = np.repeat(1.0 / n, n)
         h = np.zeros(n)
-        tree = ConstructTree(np.float64(x), np.float64(m), np.float64(h))
+        tree = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64))
         got = _walk_particles(tree)
         assert np.array_equal(np.sort(got), np.arange(n)), f"n={n} ({gen}): traversal is not a permutation"
 
@@ -158,7 +195,7 @@ def test_treewalk_links_reach_every_particle_with_duplicates():
     h = np.repeat(0.01, n)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        tree = ConstructTree(np.float64(x), np.float64(m), np.float64(h))
+        tree = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64))
     assert np.array_equal(np.sort(_walk_particles(tree)), np.arange(n))
 
 
@@ -174,7 +211,7 @@ def test_node_masses_equal_sum_of_children():
     x = rng.random((n, 3))
     m = rng.random(n) / n
     h = np.zeros(n)
-    tree = ConstructTree(np.float64(x), np.float64(m), np.float64(h))
+    tree = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64))
     for no in range(tree.NumParticles, tree.NumNodes):
         if tree.FirstSubnode[no] < 0:
             continue  # not an allocated internal node

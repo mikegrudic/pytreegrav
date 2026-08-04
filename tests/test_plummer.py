@@ -15,7 +15,7 @@ def plummer(n, seed=42):
     d = np.random.normal(size=(n, 3))
     pos = (d.T * r / np.sum(d**2, axis=1) ** 0.5).T
     m = np.repeat(1.0 / n, n)
-    return np.float64(pos), np.float64(m), np.float64(r)
+    return np.asarray(pos, np.float64), np.asarray(m, np.float64), np.asarray(r, np.float64)
 
 
 def _rms_rel(a, ref):

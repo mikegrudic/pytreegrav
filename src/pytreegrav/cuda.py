@@ -1,8 +1,6 @@
 """Optional CUDA backend: ray-traced column density, monopole gravity, and brute-force gravity.
 
-Deliberately not imported by ``pytreegrav/__init__.py``, so ``import pytreegrav`` works with no CUDA
-installed.  Requires ``pip install pytreegrav[cuda]``.  Either hold a context, which packs and uploads
-the tree (or the sources) once and is the point for repeated evaluation::
+Deliberately not imported by ``pytreegrav/__init__.py``, so ``import pytreegrav`` works with no CUDA installed.  Requires ``pip install pytreegrav[cuda]``.  Either hold a context, which packs and uploads the tree (or the sources) once and is the point for repeated evaluation::
 
     from pytreegrav.cuda import CudaColumnDensity, CudaPotential, CudaAccel
     ctx = CudaColumnDensity(tree);  columns = ctx(pos, rays)
@@ -10,31 +8,11 @@ the tree (or the sources) once and is the point for repeated evaluation::
 
 or pass ``device="cuda"`` to ColumnDensity/Potential/Accel, which uploads on every call.
 
-Measured on an RTX A6000 against the shipped grouped CPU walks on 32 Xeon Gold 6244 threads, on a real
-STARFORGE snapshot (22.3M gas particles, 33.5M nodes): 12.3x for 6-ray column density (52 s vs 638 s),
-and for monopole gravity 20.9x (potential) / 21.4x (acceleration) with the context reused, 5.5x / 5.9x
-single-shot -- gravity walks are short enough that the one-off tree upload dominates one call.  Brute
-force runs at 387 Gpair/s against roughly 10 on 32 threads.  Clustered data is the harder case, putting
-very unequal walks in one warp and swamping a 6 MB L2, so these are the figures to expect rather than
-the better ones smooth synthetic clouds give.  The walk kernels need few registers and no local memory
-because the traversal is stackless: its whole state is one integer cursor threaded through
-NextBranch/FirstSubnode, where a conventional traversal would need a per-thread stack in local memory.
+On an RTX A6000 against the grouped CPU walks on 32 Xeon Gold 6244 threads, on a 22.3M-particle STARFORGE snapshot: ~12x for 6-ray column density, ~21x for monopole gravity with the context reused (~15x single-shot, a gravity walk being short enough that the pack-and-upload is a third of one call), and 387 Gpair/s brute force against roughly 10.  Clustered data is the harder case -- very unequal walks in one warp, and a 6 MB L2 -- so expect these figures rather than the better ones smooth synthetic clouds give.
 
-Common to all three: one independent cursor per thread, so no cooperation between lanes and no warp
-intrinsics.  Grouping is left to the warp -- 32 Morton-adjacent targets hold the same node index for
-most of the descent, so the row fetch broadcasts.  That is the amortization the CPU's grouped walks buy
-by hand, but without the acceptance-radius padding they pay for it (which drives column density's leaf
-tests from 24 to 1389 per target).
+All three give each thread one independent stackless cursor, its whole state a single integer threaded through NextBranch/FirstSubnode: no warp intrinsics, and none of the local memory a per-thread traversal stack would need.  Grouping is left to the warp, since 32 Morton-adjacent targets hold the same node index for most of the descent and the row fetch broadcasts -- the amortization the CPU's grouped walks buy by hand, without the acceptance-radius padding they pay for it.
 
-One thing the ray walk must do differently from the CPU: the impact parameter is ``|d - (d.n)n|^2``,
-not ``r^2 - z^2``.  That subtraction cancels for a nearly radial ray with relative error ~eps (r/b)^2 -- a
-harmless 3.6e-12 in float64, but measured 2.0e-02 in float32.  The stable form is a prerequisite for
-float32, not an optimization.  See the per-quantity sections below for accuracy figures.
-
-Getting float32 is not automatic and is not visible in the source; see ``_numerics``.  Every kernel here
-was once silently doing float64 arithmetic on float32 arrays, which on a 1:32-FP64 device cost 39-55x on
-brute force and 4-6x on the tree walks.  If you touch these bodies, check the generated PTX for ``.f64``
-rather than trusting the array dtypes::
+Two things not to undo.  The ray walk's impact parameter must be ``|d - (d.n)n|^2``, not the CPU's ``r^2 - z^2``: that subtraction cancels for a nearly radial ray, a harmless 3.6e-12 in float64 but 2.0e-02 in float32.  And float32 is neither automatic nor visible in the source (see ``_numerics``) -- every kernel here once silently did float64 arithmetic on float32 arrays, costing 39-55x on brute force, so check the PTX rather than trusting the array dtypes::
 
     ptx = list(kernel.overloads.values())[0].inspect_asm(cc)   # expect zero '.f64'
 """
@@ -42,7 +20,7 @@ rather than trusting the array dtypes::
 import math
 
 import numpy as np
-from numba import float32, float64, njit
+from numba import float32, float64, njit, prange
 
 __all__ = [
     "CudaAccel",
@@ -69,20 +47,16 @@ def _rsqrt_cpu(x):
 def _numerics(cuda_target):
     """``(cast, sqrt, rsqrt)`` for one compilation target, injected into the shared walk bodies.
 
-    Numba types Python float literals as float64 and ``math.sqrt`` as float64->float64, so a body
-    written naively promotes its whole accumulator chain even when every array is float32.  That is
-    invisible on the CPU and catastrophic on a 1:32-FP64 device: the brute-force kernel measured 7.4
-    Gpair/s that way against 292 with the casts, and the PTX carried zero f32 divides or sqrts.  So
-    every literal goes through ``cast`` and roots come from libdevice's f32 entry points.
+    Numba types Python float literals as float64 and ``math.sqrt`` as float64->float64, so a body written naively promotes its whole accumulator chain even when every array is float32.  That is invisible on the CPU and catastrophic on a 1:32-FP64 device: the brute-force kernel measured 7.4 Gpair/s that way against 292 with the casts, and the PTX carried zero f32 divides or sqrts.  So every literal goes through ``cast`` and roots come from libdevice's f32 entry points.
 
-    ``rsqrt`` also replaces the divisions: ``m/r`` and ``m/(r*r2)`` become multiplies by rinv and
-    rinv^3, trading ``div.rn.f32`` (~10 instructions) for one SFU op already needed for ``r``.
+    ``rsqrt`` also replaces the divisions: ``m/r`` and ``m/(r*r2)`` become multiplies by rinv and rinv^3, trading ``div.rn.f32`` (~10 instructions) for one SFU op already needed for ``r``.
     """
     if cuda_target:
         from numba.cuda import libdevice
 
         return float32, libdevice.sqrtf, libdevice.rsqrtf
     return float64, math.sqrt, _rsqrt_cpu
+
 
 # Packed row.  Leaves and nodes overload slots 3-6, since an element is only ever one or the other.
 #   0,1,2  centre of mass          3  leaf h^2 / node (h + 0.866 size + delta)^2
@@ -105,48 +79,65 @@ def is_available():
         return False
 
 
+@njit(parallel=True)
+def _pack_column_rows(coords, soft, mass, size, delta, npart, rows, nxt, first, links):
+    """Fill the column-density rows and links in one parallel pass; return the non-finite count.
+
+    Arithmetic happens in the source dtype and lands in ``rows``, so the result is bit-identical to computing wide and narrowing at the end -- but without the float64 scratch buffer, which was 2.1 GB at N=2.2e7 and, being written one strided column at a time, touched every cache line five times.
+    """
+    bad = 0
+    for i in prange(rows.shape[0]):
+        rows[i, 0] = coords[i, 0]
+        rows[i, 1] = coords[i, 1]
+        rows[i, 2] = coords[i, 2]
+        h = soft[i]
+        if i < npart:  # leaf
+            if h > 0:  # a zero-radius particle has no cross-section; leave its row zeroed
+                rows[i, 3] = h * h
+                rows[i, 4] = 1.0 / h
+                rows[i, 5] = FAC_DENSITY * mass[i] / (h * h)
+                rows[i, 6] = 1.0 / (h * h)
+        else:
+            reach = h + R_EFF_COEFF * size[i] + delta[i]
+            rows[i, 3] = reach * reach
+        links[i, 0] = nxt[i]
+        links[i, 1] = first[i]
+        for k in range(7):
+            if not np.isfinite(rows[i, k]):
+                bad += 1
+    return bad
+
+
 def pack_tree(tree, dtype=np.float32):
     """Repack an Octree into (nodes (NumNodes, 8) ``dtype``, links int32 (NumNodes, 2)).
 
-    Links stay in their own int32 array rather than bit-cast into the float row: float32 represents
-    integers exactly only to 2**24, which N > ~1.1e7 would exceed silently.  ``dtype`` is for
-    validation -- float64 rows isolate any algorithmic difference from the CPU walk, float32 then
-    shows what narrowing costs.
+    Links stay in their own int32 array rather than bit-cast into the float row: float32 represents integers exactly only to 2**24, which N > ~1.1e7 would exceed silently.  ``dtype`` is for validation -- float64 rows isolate any algorithmic difference from the CPU walk, float32 then shows what narrowing costs.
     """
     n = tree.NumNodes
-    npart = tree.NumParticles
-    nodes = np.zeros((n, ROW), dtype=np.float64)  # build wide, narrow at the end
-    nodes[:, 0:3] = tree.Coordinates[:n]
-
-    h = np.asarray(tree.Softenings[:n], dtype=np.float64)
-    is_leaf = np.arange(n) < npart
-    ok = is_leaf & (h > 0)  # a zero-radius particle has no cross-section; leave its row zeroed
-
-    nodes[ok, 3] = h[ok] ** 2
-    nodes[ok, 4] = 1.0 / h[ok]
-    nodes[ok, 5] = FAC_DENSITY * np.asarray(tree.Masses[:n], dtype=np.float64)[ok] / h[ok] ** 2
-    nodes[ok, 6] = 1.0 / h[ok] ** 2
-
-    node_sel = ~is_leaf
-    reach = h[node_sel] + R_EFF_COEFF * np.asarray(tree.Sizes[:n], dtype=np.float64)[node_sel]
-    reach += np.asarray(tree.Deltas[:n], dtype=np.float64)[node_sel]
-    nodes[node_sel, 3] = reach**2
-
+    packed = np.zeros((n, ROW), dtype=dtype)
+    links = np.empty((n, 2), dtype=np.int32)
     # The leaf prefactor goes as M/h^2, so an absurdly small radius in awkward units can exceed
     # float32's ~1e38.  Fail loudly rather than uploading inf.
     with np.errstate(over="ignore"):  # reported properly just below
-        packed = nodes.astype(dtype)
-    if not np.isfinite(packed).all():
-        bad = np.argwhere(~np.isfinite(packed))
-        raise ValueError(
-            f"packing overflowed {np.dtype(dtype).name} at {len(bad)} entries (first: element "
-            f"{bad[0][0]}, slot {bad[0][1]}, value {nodes[bad[0][0], bad[0][1]]:.3e}). Rescale "
-            "masses/radii, or use the float64 CPU path."
+        nbad = _pack_column_rows(
+            np.asarray(tree.Coordinates[:n], dtype=np.float64),
+            np.asarray(tree.Softenings[:n], dtype=np.float64),
+            np.asarray(tree.Masses[:n], dtype=np.float64),
+            np.asarray(tree.Sizes[:n], dtype=np.float64),
+            np.asarray(tree.Deltas[:n], dtype=np.float64),
+            tree.NumParticles,
+            packed,
+            tree.NextBranch[:n],
+            tree.FirstSubnode[:n],
+            links,
         )
-
-    links = np.empty((n, 2), dtype=np.int32)
-    links[:, 0] = tree.NextBranch[:n]
-    links[:, 1] = tree.FirstSubnode[:n]
+    if nbad:
+        i, slot = np.argwhere(~np.isfinite(packed))[0]
+        raise ValueError(
+            f"packing overflowed {np.dtype(dtype).name} at {nbad} entries (first: element {i}, slot "
+            f"{slot}, from softening {tree.Softenings[i]:.3e} and mass {tree.Masses[i]:.3e}; the leaf "
+            "prefactor goes as M/h^2). Rescale masses/radii, or use the float64 CPU path."
+        )
     return packed, links
 
 
@@ -164,9 +155,7 @@ def _make_column_walk(cuda_target):
     def walk(px, py, pz, rx, ry, rz, nodes, links, npart):
         """Column density from (px,py,pz) along unit (rx,ry,rz) over a packed tree.
 
-        Same physics as treewalk.ColumnDensityWalk_singleray: a node opens if its reach sphere meets
-        the forward ray; a leaf contributes the uniform-sphere chord, whole when the target lies
-        outside the sphere and only the forward half when inside.
+        Same physics as treewalk.ColumnDensityWalk_singleray: a node opens if its reach sphere meets the forward ray; a leaf contributes the uniform-sphere chord, whole when the target lies outside the sphere and only the forward half when inside.
         """
         col = ZERO
         no = npart  # root
@@ -222,8 +211,7 @@ _KERNEL = None
 
 
 def _kernel():
-    """Compile the CUDA kernel, reusing _walk as a device function.  Built lazily so this module
-    imports on a machine with no CUDA."""
+    """Compile the CUDA kernel, reusing _walk as a device function.  Built lazily so this module imports on a machine with no CUDA."""
     global _KERNEL
     if _KERNEL is None:
         from numba import cuda
@@ -248,8 +236,7 @@ def _kernel():
 class CudaColumnDensity:
     """Ray-traced column density on a CUDA device, against one uploaded tree.
 
-    Packing and uploading the tree is the fixed cost -- 179 ms for 60 MB at N=1e6, against 507 ms for
-    a 6-ray pass -- so hold the context and call it repeatedly.  Per-call transfers are ~2% of a call.
+    Packing and uploading the tree is the fixed cost -- 179 ms for 60 MB at N=1e6, against 507 ms for a 6-ray pass -- so hold the context and call it repeatedly.  Per-call transfers are ~2% of a call.
 
     Arguments:
     tree -- Octree holding the source mass distribution
@@ -274,8 +261,7 @@ class CudaColumnDensity:
     def __call__(self, pos, rays):
         """Column densities, shape (len(pos), len(rays)), float32.
 
-        ``pos`` in the tree's Morton order (``tree.TreewalkIndices``) gives warp coherence; any other
-        order returns the same answer, more slowly.  ``rays`` are normalized here.
+        ``pos`` in the tree's Morton order (``tree.TreewalkIndices``) gives warp coherence; any other order returns the same answer, more slowly.  ``rays`` are normalized here.
         """
         from numba import cuda
 
@@ -310,32 +296,55 @@ class CudaColumnDensity:
 GRAV_ROW = 8
 
 
+@njit(parallel=True)
+def _pack_grav_rows(coords, mass, soft, size, delta, rows, nxt, first, links):
+    """Fill the gravity rows and links in one parallel pass; return the non-finite count.
+
+    See _pack_column_rows on why this replaced five strided writes into a float64 scratch buffer.
+    """
+    bad = 0
+    for i in prange(rows.shape[0]):
+        rows[i, 0] = coords[i, 0]
+        rows[i, 1] = coords[i, 1]
+        rows[i, 2] = coords[i, 2]
+        rows[i, 3] = mass[i]
+        rows[i, 4] = soft[i]
+        rows[i, 5] = size[i]
+        rows[i, 6] = delta[i]
+        rows[i, 7] = 0.0
+        links[i, 0] = nxt[i]
+        links[i, 1] = first[i]
+        for k in range(7):
+            if not np.isfinite(rows[i, k]):
+                bad += 1
+    return bad
+
+
 def pack_tree_gravity(tree, dtype=np.float32):
     """Repack an Octree for the gravity kernels: (nodes (NumNodes, 8) ``dtype``, links int32).
 
-    Monopole only -- quadrupoles would need six more slots and a second cache line per node, and the
-    measured float32 headroom means monopole at a smaller theta is usually the better trade.
+    Monopole only -- quadrupoles would need six more slots and a second cache line per node, and the measured float32 headroom means monopole at a smaller theta is usually the better trade.
     """
     n = tree.NumNodes
-    nodes = np.zeros((n, GRAV_ROW), dtype=np.float64)
-    nodes[:, 0:3] = tree.Coordinates[:n]
-    nodes[:, 3] = tree.Masses[:n]
-    nodes[:, 4] = tree.Softenings[:n]
-    nodes[:, 5] = tree.Sizes[:n]
-    nodes[:, 6] = tree.Deltas[:n]
-
-    with np.errstate(over="ignore"):
-        packed = nodes.astype(dtype)
-    if not np.isfinite(packed).all():
-        bad = np.argwhere(~np.isfinite(packed))
-        raise ValueError(
-            f"packing overflowed {np.dtype(dtype).name} at {len(bad)} entries (first: element "
-            f"{bad[0][0]}, slot {bad[0][1]}, value {nodes[bad[0][0], bad[0][1]]:.3e})."
-        )
-
+    packed = np.empty((n, GRAV_ROW), dtype=dtype)
     links = np.empty((n, 2), dtype=np.int32)
-    links[:, 0] = tree.NextBranch[:n]
-    links[:, 1] = tree.FirstSubnode[:n]
+    with np.errstate(over="ignore"):
+        nbad = _pack_grav_rows(
+            np.asarray(tree.Coordinates[:n], dtype=np.float64),
+            np.asarray(tree.Masses[:n], dtype=np.float64),
+            np.asarray(tree.Softenings[:n], dtype=np.float64),
+            np.asarray(tree.Sizes[:n], dtype=np.float64),
+            np.asarray(tree.Deltas[:n], dtype=np.float64),
+            packed,
+            tree.NextBranch[:n],
+            tree.FirstSubnode[:n],
+            links,
+        )
+    if nbad:
+        i, slot = np.argwhere(~np.isfinite(packed))[0]
+        raise ValueError(
+            f"packing overflowed {np.dtype(dtype).name} at {nbad} entries (first: element {i}, slot {slot})."
+        )
     return packed, links
 
 
@@ -387,9 +396,7 @@ _force_kernel_cpu = njit(_force_kernel, inline="always", fastmath=True)
 def _make_grav_walks(pot_kernel, force_kernel, cuda_target):
     """Build (potential, accel) walk bodies bound to the given softening kernels.
 
-    A factory so the same source can be closed over the CPU-jitted kernels or the CUDA device ones --
-    numba will not let a cuda device function call an njit one -- and so the literals and roots can be
-    typed per target (see _numerics).
+    A factory so the same source can be closed over the CPU-jitted kernels or the CUDA device ones -- numba will not let a cuda device function call an njit one -- and so the literals and roots can be typed per target (see _numerics).
     """
     f, sqrt, rsqrt = _numerics(cuda_target)
     ZERO, C06 = f(0.0), f(0.6)
@@ -397,11 +404,7 @@ def _make_grav_walks(pot_kernel, force_kernel, cuda_target):
     def walk_potential(px, py, pz, soft_t, nodes, links, npart, inv_theta):
         """Potential at (px,py,pz); mirrors treewalk.PotentialWalk, monopole.
 
-        The self term is dropped by ``r > 0``, so the target must be *bit-identical* to its own stored
-        row -- hence callers narrowing both with the same float32 cast.  float64 targets against
-        float32 rows put a particle 7.9e-08 from itself, inside its softening, adding a spurious
-        ``-2.8 m/h``: 1.1e-02 error against 3.1e-08 when consistent.  Accel hides it (the softened
-        kernel scales it by a vanishing dx), so the potential is where it surfaces.
+        The self term is dropped by ``r > 0``, so the target must be *bit-identical* to its own stored row -- hence callers narrowing both with the same float32 cast.  float64 targets against float32 rows put a particle 7.9e-08 from itself, inside its softening, adding a spurious ``-2.8 m/h``: 1.1e-02 error against 3.1e-08 when consistent.  Accel hides it (the softened kernel scales it by a vanishing dx), so the potential is where it surfaces.
         """
         phi = ZERO
         no = npart
@@ -580,9 +583,7 @@ class _CudaGravity:
 class CudaPotential(_CudaGravity):
     """Monopole gravitational potential on a CUDA device, against one uploaded tree.
 
-    float32; the measured error against the float64 CPU walk is ~1e-06 relative, well under the
-    opening-angle truncation error, and potential has no cancellation at all (every term is negative).
-    Hold the instance and call it repeatedly -- packing and uploading the tree is the fixed cost.
+    float32; the measured error against the float64 CPU walk is ~1e-06 relative, well under the opening-angle truncation error, and potential has no cancellation at all (every term is negative). Hold the instance and call it repeatedly -- packing and uploading the tree is the fixed cost.
     """
 
     def __call__(self, pos, softening=None, G=1.0, theta=0.7):
@@ -593,9 +594,7 @@ class CudaPotential(_CudaGravity):
 class CudaAccel(_CudaGravity):
     """Monopole gravitational acceleration on a CUDA device, against one uploaded tree.
 
-    float32.  See the note above the gravity section on why that is safe: acceleration is a vector
-    residual, but the measured cancellation factor on real data is 2.3 median and 60 worst, leaving
-    the float32 error 1-3 orders of magnitude below the theta truncation error.
+    float32.  See the note above the gravity section on why that is safe: acceleration is a vector residual, but the measured cancellation factor on real data is 2.3 median and 60 worst, leaving the float32 error 1-3 orders of magnitude below the theta truncation error.
     """
 
     def __call__(self, pos, softening=None, G=1.0, theta=0.7):
@@ -619,9 +618,7 @@ _BF_KERNELS = None
 def _bf_kernels():
     """Compile the two CUDA brute-force kernels, lazily.
 
-    Written against cuda.* directly rather than through a shared factory: unlike the tree walks there
-    is no CPU counterpart to keep in step (bruteforce.py already has one), so injecting the intrinsics
-    would buy nothing.
+    Written against cuda.* directly rather than through a shared factory: unlike the tree walks there is no CPU counterpart to keep in step (bruteforce.py already has one), so injecting the intrinsics would buy nothing.
     """
     global _BF_KERNELS
     if _BF_KERNELS is not None:

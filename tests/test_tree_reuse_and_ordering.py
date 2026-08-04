@@ -43,7 +43,7 @@ def test_morton_order_is_idempotent():
     x, m, h = cloud(20000)
     tree = ConstructTree(x, m, h)
     xs = np.ascontiguousarray(np.take(x, tree.TreewalkIndices, axis=0))
-    assert np.array_equal(_morton_order(np.float64(xs)), np.arange(len(xs)))
+    assert np.array_equal(_morton_order(np.asarray(xs, np.float64)), np.arange(len(xs)))
     # and the reason applying the stored permutation twice is not a no-op
     sig = tree.TreewalkIndices
     assert not np.array_equal(sig[sig], np.arange(len(sig)))
@@ -114,11 +114,16 @@ def corrfunc_cases(n):
     """(cloud, [(callable, kwargs)]) for each correlation function, on one shared cloud."""
     x, v, m = cloud_with_velocity(n)
     rbins = np.geomspace(0.05, 4.0, 8)
-    return x, v, m, [
-        (DensityCorrFunc, {"rbins": rbins}),
-        (VelocityCorrFunc, {"rbins": rbins, "v": v}),
-        (VelocityStructFunc, {"rbins": rbins, "v": v}),
-    ]
+    return (
+        x,
+        v,
+        m,
+        [
+            (DensityCorrFunc, {"rbins": rbins}),
+            (VelocityCorrFunc, {"rbins": rbins, "v": v}),
+            (VelocityStructFunc, {"rbins": rbins, "v": v}),
+        ],
+    )
 
 
 @pytest.mark.parametrize("i", range(3))

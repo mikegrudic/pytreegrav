@@ -84,6 +84,42 @@ def test_packed_walk_handles_zero_radii():
     assert rel_err(got, reference(xs, SIX_RAYS, tree)) < 1e-5
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_packed_row_values(dtype):
+    """Pin every slot against the formulas directly, since the pack is a hand-written parallel kernel.
+
+    Includes zero-radius leaves (row stays zeroed past the COM) and the node reach, which is the one
+    slot computed rather than copied.
+    """
+    x, m, h = cloud(4000)
+    h = h.copy()
+    h[:40] = 0.0
+    tree = ConstructTree(x, m, h)
+    n, npart = tree.NumNodes, tree.NumParticles
+    nodes, links = pack_tree(tree, dtype=dtype)
+    hs = np.asarray(tree.Softenings[:n], np.float64)
+    ms = np.asarray(tree.Masses[:n], np.float64)
+
+    assert np.array_equal(nodes[:, 0:3], dtype(tree.Coordinates[:n]))
+    assert np.array_equal(links[:, 0], tree.NextBranch[:n])
+    assert np.array_equal(links[:, 1], tree.FirstSubnode[:n])
+    assert np.all(nodes[:, 7] == 0)  # pad
+
+    leaf = np.zeros(n, bool)
+    leaf[:npart] = True
+    live = leaf & (hs > 0)
+    assert live.any() and (leaf & (hs == 0)).any()
+    for slot, want in ((3, hs**2), (4, 1.0 / hs), (6, 1.0 / hs**2)):
+        with np.errstate(divide="ignore"):
+            assert np.array_equal(nodes[live, slot], dtype(want)[live])
+    assert np.array_equal(nodes[live, 5], dtype(3.0 / (4.0 * np.pi) * ms / hs**2)[live])
+    assert np.all(nodes[leaf & (hs == 0), 3:7] == 0)  # no cross-section, so nothing to contribute
+
+    node = ~leaf
+    reach = hs + np.sqrt(3) / 2 * np.asarray(tree.Sizes[:n], np.float64) + np.asarray(tree.Deltas[:n], np.float64)
+    assert np.array_equal(nodes[node, 3], dtype(reach**2)[node])
+
+
 def test_pack_raises_rather_than_uploading_inf():
     """The leaf prefactor goes as M/h^2, so a tiny radius can exceed float32; that must not be silent."""
     x, m, h = cloud(500)

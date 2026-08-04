@@ -85,12 +85,7 @@ def run(nmin, nmax_tree, nmax_bf, nmax_bf_cuda, per_decade, theta, budget, cuda)
             Potential(pos, m, h, method=method, theta=theta, **kw)
             Accel(pos, m, h, method=method, theta=theta, **kw)
 
-    res = {
-        f"{q}_{method}_{tag}": {}
-        for q in ("pot", "acc")
-        for method in ("tree", "bruteforce")
-        for tag, _, _ in bks
-    }
+    res = {f"{q}_{method}_{tag}": {} for q in ("pot", "acc") for method in ("tree", "bruteforce") for tag, _, _ in bks}
 
     print(f"threads = {nthreads}, theta = {theta}" + (", cuda" if cuda else ""))
     header = [f"{tag} {q} {mn}" for tag, _, _ in bks for mn in ("tree", "bf") for q in ("pot", "acc")]

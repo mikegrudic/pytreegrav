@@ -268,7 +268,7 @@ phi = Potential(x, m, h, theta=0.7, device="cuda")   # or Accel(...)
 Gravity walks are short — under 0.1 µs/particle on the device — so the one-off tree upload dominates a
 single call. On that snapshot, reusing a `CudaPotential`/`CudaAccel` context gives **20.9x** and
 **21.4x** (0.91 s and 0.99 s against 19 s and 21 s on 32 threads); the single-shot flag above, which
-uploads every call, gives **5.5x** and **5.9x**.
+packs and uploads the tree every call (0.43 s at this N), gives **14.2x** and **14.9x**.
 
 Measured float32 error against the *same, ungrouped* walk in float64 — the algorithm the device actually
 runs: potential 1.3e-7 median / 7.5e-6 worst, acceleration 2.0e-9 / 1.9e-4. Diffing against the *default*

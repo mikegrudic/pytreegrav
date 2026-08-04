@@ -19,26 +19,27 @@ an NVIDIA RTX A6000 against 32 Xeon Gold 6244 threads, on a STARFORGE snapshot w
      - 638 s
      - 52 s
      - **12.3x**
-     - 11.5x
+     - 12.2x
    * - monopole ``Potential``
      - 19.0 s
      - 0.91 s
      - **20.9x**
-     - 5.5x
+     - 14.2x
    * - monopole ``Accel``
      - 21.1 s
      - 0.99 s
      - **21.4x**
-     - 5.9x
+     - 14.9x
    * - brute force, pair rate at :math:`N = 2.6 \times 10^5`
      - ~10 Gpair/s
      - 387 Gpair/s
      - **~40x**
      - --
 
-The two columns differ by the one-off pack-and-upload of the tree (2.5-3.9 s here). It is a small share
-of a 52 s column-density pass and a large one of a 0.9 s gravity walk, which is why gravity in particular
-wants a held context.
+The two columns differ by the one-off pack-and-upload of the tree, 0.43 s for gravity and 0.54 s here:
+0.12 s to build the packed rows and the rest PCIe. It is negligible against a 52 s column-density pass and
+a third of a 0.9 s gravity walk, which is why gravity in particular still wants a held context. (The
+*first* large device allocation in a process costs an extra ~0.6 s on top, once.)
 
 Clustered structure is the harder case for a GPU: a warp can hold both dense-core and diffuse-gas
 sightlines at once, so lanes wait on each other, and the packed tree is over 1 GB against a 6 MB L2.
@@ -96,9 +97,9 @@ Pass :code:`device="cuda"` to :func:`~pytreegrav.frontend.ColumnDensity`:
 
     columns = ColumnDensity(x, m, h, rays=6, device="cuda")
 
-This repacks and uploads the tree on every call. The upload is the fixed cost — roughly 180 ms for a
-:math:`10^6`-particle tree, against roughly 500 ms for a 6-ray pass — so a single call still wins, but
-it leaves something on the table.
+This repacks and uploads the tree on every call, which for column density is a rounding error: 0.54 s
+against a 52 s pass at :math:`N = 2.2 \times 10^7`. Holding a context is worth much more for gravity,
+whose walks are short enough for that fixed cost to matter.
 
 Only the ray-traced path is supported: pass :code:`rays`, and leave :code:`randomize_rays` off.
 Grouping targets requires them to share a ray grid, which per-target randomization breaks. The 6-bin
@@ -152,8 +153,8 @@ N-body step, or a binding-energy sweep over many candidate groups:
 opening angle.
 
 Hold the context if you can. Gravity walks are short -- under 0.1 us per particle on the device -- so the
-one-off pack-and-upload dominates a single call: on the snapshot above, 20.9x with the context reused
-against 5.5x for a bare ``Potential(..., device="cuda")``.
+one-off pack-and-upload is a third of a single call: on the snapshot above, 20.9x with the context reused
+against 14.2x for a bare ``Potential(..., device="cuda")``.
 
 Accuracy on that snapshot, against two different CPU references, because the choice matters more than
 the precision does:
