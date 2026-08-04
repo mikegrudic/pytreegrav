@@ -218,6 +218,39 @@ compressive = (eigenvalues < 0).all(axis=1)  # fully compressive tides
 
 Note that the tidal tensor is one derivative higher than the acceleration, so at a given ``theta`` its fractional error is correspondingly larger. Use a smaller ``theta`` than you would for forces and turn on ``quadrupole``; on a uniform box of $10^5$ particles that costs 0.14 s against 0.04 s for the monopole walk at ``theta=0.7``.
 
+# Reusing the tree: the `Field` object
+
+The functions above are self-contained: `Accel(x, m, h)` is a complete answer with no setup. The price is that each call rebuilds the tree and returns exactly one quantity, so asking for the potential, the field and the tidal tensor of one mass distribution builds three trees and walks each of them once.
+
+`Field` holds the tree and the sorted particle arrays, so repeated evaluation pays for neither again — and `evaluate` gets everything you ask for out of a **single traversal**:
+
+```python
+from pytreegrav import Field
+
+f = Field(x, m, softening=h, theta=0.4, quadrupole=True, parallel=True)
+
+phi = f.potential()                                     # one walk
+res = f.evaluate(potential=True, accel=True, tidal=True) # all three, still one walk
+phi, g, T = res["potential"], res["accel"], res["tidal"]
+
+T_grid = f.tidal(pos_target=grid)                        # at arbitrary points
+```
+
+Fusing is worth real time, because the per-interaction setup — the distance, the softening, and with `quadrupole=True` the moment contraction — is computed once and shared rather than repeated per field. Measured on 10⁶ Plummer particles at 32 threads, θ=0.5, against the sum of the equivalent separate walks:
+
+| requested together | speedup (monopole / quadrupole) |
+| --- | --- |
+| potential + accel | 1.70x / 1.54x |
+| potential + tidal | 1.31x / 1.32x |
+| accel + tidal | 1.36x / 1.41x |
+| all three | 1.64x / 1.65x |
+
+Put another way: once you are paying for the tidal tensor, the potential and acceleration are nearly free — quadrupole `T` alone is 4.26 s and all three together are 5.11 s.
+
+One caveat. A single traversal means a single acceptance criterion, hence one `theta` for everything requested, and the tidal tensor wants a smaller `theta` than the potential does. If you want `phi` at 0.7 and `T` at 0.4, two separate calls are genuinely cheaper. When they *are* wanted at one `theta`, fusing also makes them mutually consistent, since they then share an accepted-node set.
+
+This is the CPU counterpart of the `pytreegrav.cuda` context objects, which already worked this way.
+
 # Ray-tracing
 
 pytreegrav's octree implementation can be used for efficient tree-based searches for ray-tracing of unstructured data. Currently implemented is the method ``ColumnDensity``, which calculates the integral of the density field to infinity along a grid of rays originating at each particle (defaulting to 6 rays). For example:

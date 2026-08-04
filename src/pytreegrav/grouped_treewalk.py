@@ -4,7 +4,7 @@ One traversal per *group* of consecutive (Morton-sorted, hence spatially compact
 
 Acceptance uses the group bbox's nearest distance (r_min) and max softening, strictly more conservative than per-particle, so a superset of nodes opens: accuracy is equal-or-better for a given theta, at the cost of more force-pairs.  group_size=1 reproduces the per-particle walk; the optimum (~8) is where amortization saturates before interaction-list bloat dominates.
 
-The traversal core is shared; only the small ``inline='always'`` per-interaction kernel varies (monopole/quadrupole x potential/acceleration), and numba inlines it, so sharing costs a few percent.
+The traversal core is shared; only the small ``inline='always'`` per-interaction kernel varies, and numba inlines it, so sharing costs a few percent.  That kernel is generated from a single parameterized source (:func:`_make_field_kernel`) specialized on which of potential/acceleration/tidal-tensor are wanted and whether quadrupoles are in play -- so any subset can be had from ONE traversal, and there is one copy of the arithmetic rather than one per field.
 """
 
 import numpy as np
@@ -17,271 +17,142 @@ from .octree import _morton_keys, _radix_argsort
 
 
 # --------------------------------------------------------------------------------------------------
-# Per-interaction kernels.  Signature: (no, a, b, pos, soft, tree, acc) where [a, b) is the group's
-# range in the Morton-sorted target arrays and acc is the group's (m, W) accumulator.  Each adds the
-# contribution of source element ``no`` (a particle if no < NumParticles, else a node) to every
-# target in the group.  Marked inline='always' so the shared core folds them in.
+# Per-interaction kernel.  ONE parameterized source, specialized per requested field set.
+#
+# Signature: (no, a, b, pos, soft, tree, acc) where [a, b) is the group's range in the Morton-sorted
+# target arrays and acc is the group's (m, W) accumulator.  Adds the contribution of source element
+# ``no`` (a particle if no < NumParticles, else a node) to every target in the group.
+#
+# want_pot/want_accel/want_tidal/quadrupole are closure constants, not arguments, so numba folds the
+# guards at compile time and the dead branches vanish: the code generated for accel-only contains no
+# potential or tidal arithmetic at all.  Passing them as arguments instead would put an indirect call
+# and live branches in the innermost loop.  Same reason the traversal core is built per kernel.
+#
+# The payoff for fusing is NOT traversal amortization -- grouping already did that -- but the shared
+# per-interaction setup: one sqrt, one max(hs, soft[t]), one ForceKernel serving both accel and tidal,
+# and one qdx/qdy/qdz/A contraction serving all three.  Measured on 1e6 Plummer particles at 32
+# threads, theta=0.5, against the sum of the equivalent separate walks: potential+accel 1.54-1.70x,
+# potential+tidal 1.31-1.32x, accel+tidal 1.36-1.41x, all three 1.64-1.65x.
+#
+# Replacing the six hand-written kernels this grew out of cost nothing: A/B against them at the same
+# N, run in both orderings on an idle machine, put every single-field case within 2%, with the sign
+# of the difference flipping between orderings -- i.e. noise.  Do not reintroduce a hand-written
+# variant on the strength of a single timing run; an earlier prototype appeared to show a 5% loss on
+# accel+quadrupole that turned out to be the machine, not the code.
 # --------------------------------------------------------------------------------------------------
 
 
-@njit(inline="always", fastmath=True)
-def _accel_mono(no, a, b, pos, soft, tree, acc):
-    """Add source ``no``'s monopole (point-mass, softened) acceleration to every target in [a, b)."""
-    cx = tree.Coordinates[no, 0]
-    cy = tree.Coordinates[no, 1]
-    cz = tree.Coordinates[no, 2]
-    M = tree.Masses[no]
-    hs = tree.Softenings[no]
-    for t in range(a, b):
-        dx = cx - pos[t, 0]
-        dy = cy - pos[t, 1]
-        dz = cz - pos[t, 2]
-        r2 = dx * dx + dy * dy + dz * dz
-        if r2 > 0:
-            r = sqrt(r2)
-            ht = max(hs, soft[t])
-            if r < ht:
-                fac = M * ForceKernel(r, ht)
-            else:
-                fac = M / (r * r2)
-            acc[t - a, 0] += fac * dx
-            acc[t - a, 1] += fac * dy
-            acc[t - a, 2] += fac * dz
+def _make_field_kernel(want_pot, want_accel, want_tidal, quadrupole):
+    """Build the per-interaction kernel for one combination of requested fields.
 
+    Output components are packed contiguously in the order potential, acceleration, tidal -- only the
+    requested ones -- so the accumulator width is exactly ``1*want_pot + 3*want_accel + 9*want_tidal``.
 
-@njit(inline="always", fastmath=True)
-def _pot_mono(no, a, b, pos, soft, tree, acc):
-    """Add source ``no``'s monopole (point-mass, softened) potential to every target in [a, b)."""
-    cx = tree.Coordinates[no, 0]
-    cy = tree.Coordinates[no, 1]
-    cz = tree.Coordinates[no, 2]
-    M = tree.Masses[no]
-    hs = tree.Softenings[no]
-    for t in range(a, b):
-        dx = cx - pos[t, 0]
-        dy = cy - pos[t, 1]
-        dz = cz - pos[t, 2]
-        r2 = dx * dx + dy * dy + dz * dz
-        if r2 > 0:
-            r = sqrt(r2)
-            ht = max(hs, soft[t])
-            if r < ht:
-                acc[t - a, 0] += M * PotentialKernel(r, ht)
-            else:
-                acc[t - a, 0] += -M / r
-
-
-@njit(inline="always", fastmath=True)
-def _accel_quad(no, a, b, pos, soft, tree, acc):
-    """Add source ``no``'s acceleration to every target in [a, b), with the quadrupole term for nodes.
-
-    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole.
-
-    Components and the separation vector are held in scalars: a ``tree.Quadrupoles[no]`` view or an ``np.empty(3)`` inside the target loop costs one NRT allocation per target, and the allocator contention made this kernel *anti-scale* -- slower on 8 threads than 1, ~30x monopole cost at 32.
+    The tidal tensor is stored as all 9 components rather than the 6 independent ones: the duplicates
+    cost 3 adds against a reshape-free (N,3,3) view, and only 6 products are actually formed.
     """
-    cx = tree.Coordinates[no, 0]
-    cy = tree.Coordinates[no, 1]
-    cz = tree.Coordinates[no, 2]
-    M = tree.Masses[no]
-    hs = tree.Softenings[no]
-    is_node = no >= tree.NumParticles  # only nodes carry quadrupole moments
-    qxx = qxy = qxz = qyx = qyy = qyz = qzx = qzy = qzz = 0.0
-    if is_node:  # loop-invariant: load once, not once per target
-        qxx = tree.Quadrupoles[no, 0, 0]
-        qxy = tree.Quadrupoles[no, 0, 1]
-        qxz = tree.Quadrupoles[no, 0, 2]
-        qyx = tree.Quadrupoles[no, 1, 0]
-        qyy = tree.Quadrupoles[no, 1, 1]
-        qyz = tree.Quadrupoles[no, 1, 2]
-        qzx = tree.Quadrupoles[no, 2, 0]
-        qzy = tree.Quadrupoles[no, 2, 1]
-        qzz = tree.Quadrupoles[no, 2, 2]
-    for t in range(a, b):
-        dx = cx - pos[t, 0]
-        dy = cy - pos[t, 1]
-        dz = cz - pos[t, 2]
-        r2 = dx * dx + dy * dy + dz * dz
-        if r2 > 0:
-            r = sqrt(r2)
-            ht = max(hs, soft[t])
-            if r < ht:
-                fac = M * ForceKernel(r, ht)
-            else:
-                fac = M / (r * r2)
-            acc[t - a, 0] += fac * dx  # monopole
-            acc[t - a, 1] += fac * dy
-            acc[t - a, 2] += fac * dz
-            if is_node:
-                r5inv = 1.0 / (r2 * r2 * r)
-                qdx = qxx * dx + qxy * dy + qxz * dz
-                qdy = qyx * dx + qyy * dy + qyz * dz
-                qdz = qzx * dx + qzy * dy + qzz * dz
-                quad_fac = (dx * qdx + dy * qdy + dz * qdz) * r5inv / r2
-                acc[t - a, 0] += 2.5 * quad_fac * dx - qdx * r5inv
-                acc[t - a, 1] += 2.5 * quad_fac * dy - qdy * r5inv
-                acc[t - a, 2] += 2.5 * quad_fac * dz - qdz * r5inv
 
+    @njit(inline="always", fastmath=True)
+    def kernel(no, a, b, pos, soft, tree, acc):
+        cx = tree.Coordinates[no, 0]
+        cy = tree.Coordinates[no, 1]
+        cz = tree.Coordinates[no, 2]
+        M = tree.Masses[no]
+        hs = tree.Softenings[no]
+        # only nodes carry quadrupole moments; leaf particles contribute the softened monopole alone
+        is_node = no >= tree.NumParticles if quadrupole else False
+        qxx = qxy = qxz = qyx = qyy = qyz = qzx = qzy = qzz = 0.0
+        if quadrupole and is_node:  # loop-invariant: load once, not once per target
+            qxx = tree.Quadrupoles[no, 0, 0]
+            qxy = tree.Quadrupoles[no, 0, 1]
+            qxz = tree.Quadrupoles[no, 0, 2]
+            qyx = tree.Quadrupoles[no, 1, 0]
+            qyy = tree.Quadrupoles[no, 1, 1]
+            qyz = tree.Quadrupoles[no, 1, 2]
+            qzx = tree.Quadrupoles[no, 2, 0]
+            qzy = tree.Quadrupoles[no, 2, 1]
+            qzz = tree.Quadrupoles[no, 2, 2]
+        for t in range(a, b):
+            dx = cx - pos[t, 0]
+            dy = cy - pos[t, 1]
+            dz = cz - pos[t, 2]
+            r2 = dx * dx + dy * dy + dz * dz
+            if r2 > 0:  # no self-interaction
+                r = sqrt(r2)
+                ht = max(hs, soft[t])
+                softened = r < ht
+                # K is M(<r)/r^3 and Q is -(1/r) dK/dr; both are shared where both are wanted
+                phi = 0.0
+                K = 0.0
+                Q = 0.0
+                if want_pot:
+                    phi = M * PotentialKernel(r, ht) if softened else -M / r
+                if want_accel or want_tidal:
+                    K = M * ForceKernel(r, ht) if softened else M / (r * r2)
+                if want_tidal:
+                    Q = M * TidalKernel(r, ht) if softened else 3.0 * K / r2
 
-@njit(inline="always", fastmath=True)
-def _pot_quad(no, a, b, pos, soft, tree, acc):
-    """Add source ``no``'s potential to every target in [a, b), with the quadrupole term for nodes.
+                gx = gy = gz = 0.0
+                if want_accel:
+                    gx = K * dx
+                    gy = K * dy
+                    gz = K * dz
+                txx = tyy = tzz = txy = txz = tyz = 0.0
+                if want_tidal:
+                    txx = Q * dx * dx - K
+                    tyy = Q * dy * dy - K
+                    tzz = Q * dz * dz - K
+                    txy = Q * dx * dy
+                    txz = Q * dx * dz
+                    tyz = Q * dy * dz
 
-    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes add the quadrupole correction.  Components are hoisted out of the target loop for the same allocation reason as in :func:`_accel_quad`.
-    """
-    cx = tree.Coordinates[no, 0]
-    cy = tree.Coordinates[no, 1]
-    cz = tree.Coordinates[no, 2]
-    M = tree.Masses[no]
-    hs = tree.Softenings[no]
-    is_node = no >= tree.NumParticles  # only nodes carry quadrupole moments
-    qxx = qxy = qxz = qyx = qyy = qyz = qzx = qzy = qzz = 0.0
-    if is_node:  # loop-invariant: load once, not once per target
-        qxx = tree.Quadrupoles[no, 0, 0]
-        qxy = tree.Quadrupoles[no, 0, 1]
-        qxz = tree.Quadrupoles[no, 0, 2]
-        qyx = tree.Quadrupoles[no, 1, 0]
-        qyy = tree.Quadrupoles[no, 1, 1]
-        qyz = tree.Quadrupoles[no, 1, 2]
-        qzx = tree.Quadrupoles[no, 2, 0]
-        qzy = tree.Quadrupoles[no, 2, 1]
-        qzz = tree.Quadrupoles[no, 2, 2]
-    for t in range(a, b):
-        dx = cx - pos[t, 0]
-        dy = cy - pos[t, 1]
-        dz = cz - pos[t, 2]
-        r2 = dx * dx + dy * dy + dz * dz
-        if r2 > 0:
-            r = sqrt(r2)
-            ht = max(hs, soft[t])
-            if is_node:
-                acc[t - a, 0] += -M / r  # accepted node: r > h, point mass
-                r5inv = 1.0 / (r * r2 * r2)
-                sq = (
-                    dx * (qxx * dx + qxy * dy + qxz * dz)
-                    + dy * (qyx * dx + qyy * dy + qyz * dz)
-                    + dz * (qzx * dx + qzy * dy + qzz * dz)
-                )
-                acc[t - a, 0] += -0.5 * sq * r5inv
-            elif r < ht:
-                acc[t - a, 0] += M * PotentialKernel(r, ht)
-            else:
-                acc[t - a, 0] += -M / r
+                if quadrupole and is_node:
+                    r5inv = 1.0 / (r2 * r2 * r)
+                    r7inv = r5inv / r2
+                    # the shared contraction: computed once, consumed by every requested field
+                    qdx = qxx * dx + qxy * dy + qxz * dz
+                    qdy = qyx * dx + qyy * dy + qyz * dz
+                    qdz = qzx * dx + qzy * dy + qzz * dz
+                    A = dx * qdx + dy * qdy + dz * qdz
+                    if want_pot:
+                        phi += -0.5 * A * r5inv
+                    if want_accel:
+                        quad_fac = A * r7inv
+                        gx += 2.5 * quad_fac * dx - qdx * r5inv
+                        gy += 2.5 * quad_fac * dy - qdy * r5inv
+                        gz += 2.5 * quad_fac * dz - qdz * r5inv
+                    if want_tidal:
+                        # traceless by construction: -10 - (5/2)*3 + 35/2 = 0
+                        diag = -2.5 * A * r7inv  # the delta_ij piece, common to all three diagonals
+                        fac = 17.5 * A * r7inv / r2
+                        txx += qxx * r5inv - 10.0 * dx * qdx * r7inv + diag + fac * dx * dx
+                        tyy += qyy * r5inv - 10.0 * dy * qdy * r7inv + diag + fac * dy * dy
+                        tzz += qzz * r5inv - 10.0 * dz * qdz * r7inv + diag + fac * dz * dz
+                        txy += qxy * r5inv - 5.0 * (dx * qdy + dy * qdx) * r7inv + fac * dx * dy
+                        txz += qxz * r5inv - 5.0 * (dx * qdz + dz * qdx) * r7inv + fac * dx * dz
+                        tyz += qyz * r5inv - 5.0 * (dy * qdz + dz * qdy) * r7inv + fac * dy * dz
 
+                o = 0
+                if want_pot:
+                    acc[t - a, 0] += phi
+                    o = 1
+                if want_accel:
+                    acc[t - a, o] += gx
+                    acc[t - a, o + 1] += gy
+                    acc[t - a, o + 2] += gz
+                    o += 3
+                if want_tidal:
+                    acc[t - a, o] += txx
+                    acc[t - a, o + 1] += txy
+                    acc[t - a, o + 2] += txz
+                    acc[t - a, o + 3] += txy
+                    acc[t - a, o + 4] += tyy
+                    acc[t - a, o + 5] += tyz
+                    acc[t - a, o + 6] += txz
+                    acc[t - a, o + 7] += tyz
+                    acc[t - a, o + 8] += tzz
 
-@njit(inline="always", fastmath=True)
-def _tidal_mono(no, a, b, pos, soft, tree, acc):
-    """Add source ``no``'s monopole tidal tensor to every target in [a, b).
-
-    Accumulates the 9 components of T_ij = -d^2 phi / dx_i dx_j flattened row-major, which for a single softened element is G m (Q dx_i dx_j - K delta_ij) with K = ForceKernel and Q = TidalKernel.  Only 6 products are formed; the tensor is symmetric.
-    """
-    cx = tree.Coordinates[no, 0]
-    cy = tree.Coordinates[no, 1]
-    cz = tree.Coordinates[no, 2]
-    M = tree.Masses[no]
-    hs = tree.Softenings[no]
-    for t in range(a, b):
-        dx = cx - pos[t, 0]
-        dy = cy - pos[t, 1]
-        dz = cz - pos[t, 2]
-        r2 = dx * dx + dy * dy + dz * dz
-        if r2 > 0:
-            r = sqrt(r2)
-            ht = max(hs, soft[t])
-            if r < ht:
-                K = M * ForceKernel(r, ht)
-                Q = M * TidalKernel(r, ht)
-            else:
-                K = M / (r * r2)
-                Q = 3.0 * K / r2
-            txy = Q * dx * dy
-            txz = Q * dx * dz
-            tyz = Q * dy * dz
-            acc[t - a, 0] += Q * dx * dx - K
-            acc[t - a, 1] += txy
-            acc[t - a, 2] += txz
-            acc[t - a, 3] += txy
-            acc[t - a, 4] += Q * dy * dy - K
-            acc[t - a, 5] += tyz
-            acc[t - a, 6] += txz
-            acc[t - a, 7] += tyz
-            acc[t - a, 8] += Q * dz * dz - K
-
-
-@njit(inline="always", fastmath=True)
-def _tidal_quad(no, a, b, pos, soft, tree, acc):
-    """Add source ``no``'s tidal tensor to every target in [a, b), with the quadrupole term for nodes.
-
-    The quadrupole potential -Q_kl dx_k dx_l / (2 r^5) differentiates twice into
-
-        T_ij += -Q_ij/r^5 ... etc
-
-    written out below as
-        Q_ij r^-5 - 5 r^-7 (dx_i (Q dx)_j + dx_j (Q dx)_i) - (5/2) A r^-7 delta_ij + (35/2) A dx_i dx_j r^-9,
-    with A = dx . Q . dx.  This is traceless by construction (Q_ii = 0), as any vacuum contribution must be.
-
-    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole.  Components are hoisted out of the target loop for the same allocation reason as in :func:`_accel_quad`.
-    """
-    cx = tree.Coordinates[no, 0]
-    cy = tree.Coordinates[no, 1]
-    cz = tree.Coordinates[no, 2]
-    M = tree.Masses[no]
-    hs = tree.Softenings[no]
-    is_node = no >= tree.NumParticles  # only nodes carry quadrupole moments
-    qxx = qxy = qxz = qyx = qyy = qyz = qzx = qzy = qzz = 0.0
-    if is_node:  # loop-invariant: load once, not once per target
-        qxx = tree.Quadrupoles[no, 0, 0]
-        qxy = tree.Quadrupoles[no, 0, 1]
-        qxz = tree.Quadrupoles[no, 0, 2]
-        qyx = tree.Quadrupoles[no, 1, 0]
-        qyy = tree.Quadrupoles[no, 1, 1]
-        qyz = tree.Quadrupoles[no, 1, 2]
-        qzx = tree.Quadrupoles[no, 2, 0]
-        qzy = tree.Quadrupoles[no, 2, 1]
-        qzz = tree.Quadrupoles[no, 2, 2]
-    for t in range(a, b):
-        dx = cx - pos[t, 0]
-        dy = cy - pos[t, 1]
-        dz = cz - pos[t, 2]
-        r2 = dx * dx + dy * dy + dz * dz
-        if r2 > 0:
-            r = sqrt(r2)
-            ht = max(hs, soft[t])
-            if r < ht:
-                K = M * ForceKernel(r, ht)
-                Q = M * TidalKernel(r, ht)
-            else:
-                K = M / (r * r2)
-                Q = 3.0 * K / r2
-            txx = Q * dx * dx - K
-            tyy = Q * dy * dy - K
-            tzz = Q * dz * dz - K
-            txy = Q * dx * dy
-            txz = Q * dx * dz
-            tyz = Q * dy * dz
-            if is_node:
-                r5inv = 1.0 / (r2 * r2 * r)
-                r7inv = r5inv / r2
-                qdx = qxx * dx + qxy * dy + qxz * dz
-                qdy = qyx * dx + qyy * dy + qyz * dz
-                qdz = qzx * dx + qzy * dy + qzz * dz
-                A = dx * qdx + dy * qdy + dz * qdz
-                diag = -2.5 * A * r7inv  # the delta_ij piece, common to all three diagonals
-                fac = 17.5 * A * r7inv / r2
-                txx += qxx * r5inv - 10.0 * dx * qdx * r7inv + diag + fac * dx * dx
-                tyy += qyy * r5inv - 10.0 * dy * qdy * r7inv + diag + fac * dy * dy
-                tzz += qzz * r5inv - 10.0 * dz * qdz * r7inv + diag + fac * dz * dz
-                txy += qxy * r5inv - 5.0 * (dx * qdy + dy * qdx) * r7inv + fac * dx * dy
-                txz += qxz * r5inv - 5.0 * (dx * qdz + dz * qdx) * r7inv + fac * dx * dz
-                tyz += qyz * r5inv - 5.0 * (dy * qdz + dz * qdy) * r7inv + fac * dy * dz
-            acc[t - a, 0] += txx
-            acc[t - a, 1] += txy
-            acc[t - a, 2] += txz
-            acc[t - a, 3] += txy
-            acc[t - a, 4] += tyy
-            acc[t - a, 5] += tyz
-            acc[t - a, 6] += txz
-            acc[t - a, 7] += tyz
-            acc[t - a, 8] += tzz
+    return kernel
 
 
 # --------------------------------------------------------------------------------------------------
@@ -370,12 +241,29 @@ def _make_core(kernel, parallel):
     return njit(core, fastmath=True, parallel=parallel)
 
 
-_accel_core = (_make_core(_accel_mono, False), _make_core(_accel_mono, True))
-_accel_quad_core = (_make_core(_accel_quad, False), _make_core(_accel_quad, True))
-_pot_core = (_make_core(_pot_mono, False), _make_core(_pot_mono, True))
-_pot_quad_core = (_make_core(_pot_quad, False), _make_core(_pot_quad, True))
-_tidal_core = (_make_core(_tidal_mono, False), _make_core(_tidal_mono, True))
-_tidal_quad_core = (_make_core(_tidal_quad, False), _make_core(_tidal_quad, True))
+_CORE_CACHE = {}
+
+
+def _get_core(want_pot, want_accel, want_tidal, quadrupole, parallel):
+    """Jitted grouped-walk core for one field set, built on first use and memoized.
+
+    Lazy rather than a table built at import: there are 2^3-1 field sets x quadrupole x parallel = 28
+    specializations, and a session typically wants one or two.  ``njit`` itself is lazy, so holding
+    dispatchers costs nothing -- but each *compilation* is real time, and these cores are deliberately
+    not ``cache=True`` (see the note in bruteforce.py: both parallel variants would share one on-disk
+    entry keyed by qualname and the parallel dispatcher would silently load the serial code).
+    """
+    key = (want_pot, want_accel, want_tidal, quadrupole, parallel)
+    core = _CORE_CACHE.get(key)
+    if core is None:
+        core = _make_core(_make_field_kernel(want_pot, want_accel, want_tidal, quadrupole), parallel)
+        _CORE_CACHE[key] = core
+    return core
+
+
+def _field_width(potential, accel, tidal):
+    """Accumulator width for a field set, matching the kernel's packing order."""
+    return 1 * potential + 3 * accel + 9 * tidal
 
 
 def _morton_order(points):
@@ -410,8 +298,17 @@ def AccelTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrup
     Returns:
     shape (N, 3) array of accelerations in the same order as ``pos``.
     """
-    core = (_accel_quad_core if quadrupole else _accel_core)[1 if parallel else 0]
-    return core(pos, soft, tree, group_size, theta, G, 3)
+    return FieldsTarget_grouped(
+        pos,
+        soft,
+        tree,
+        accel=True,
+        group_size=group_size,
+        G=G,
+        theta=theta,
+        quadrupole=quadrupole,
+        parallel=parallel,
+    )["accel"]
 
 
 def PotentialTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
@@ -419,8 +316,17 @@ def PotentialTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, qua
 
     Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,) array of potentials in the same order as ``pos``.
     """
-    core = (_pot_quad_core if quadrupole else _pot_core)[1 if parallel else 0]
-    return core(pos, soft, tree, group_size, theta, G, 1)[:, 0]
+    return FieldsTarget_grouped(
+        pos,
+        soft,
+        tree,
+        potential=True,
+        group_size=group_size,
+        G=G,
+        theta=theta,
+        quadrupole=quadrupole,
+        parallel=parallel,
+    )["potential"]
 
 
 def TidalTensorTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
@@ -428,5 +334,64 @@ def TidalTensorTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, q
 
     Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,3,3) array of tidal tensors in the same order as ``pos``; the core accumulates them flattened, and the reshape is a view.
     """
-    core = (_tidal_quad_core if quadrupole else _tidal_core)[1 if parallel else 0]
-    return core(pos, soft, tree, group_size, theta, G, 9).reshape(-1, 3, 3)
+    return FieldsTarget_grouped(
+        pos,
+        soft,
+        tree,
+        tidal=True,
+        group_size=group_size,
+        G=G,
+        theta=theta,
+        quadrupole=quadrupole,
+        parallel=parallel,
+    )["tidal"]
+
+
+def FieldsTarget_grouped(
+    pos,
+    soft,
+    tree,
+    potential=False,
+    accel=False,
+    tidal=False,
+    group_size=8,
+    G=1.0,
+    theta=0.7,
+    quadrupole=False,
+    parallel=True,
+):
+    """Any subset of {potential, accel, tidal} at ``pos`` from ``tree``, in a SINGLE traversal.
+
+    Requesting several fields together is markedly cheaper than one walk each, because the per-interaction
+    setup is shared -- see the note above :func:`_make_field_kernel` for the measured factors.  The three
+    single-field wrappers above are thin calls into this.
+
+    Arguments and keywords otherwise match :func:`AccelTarget_grouped`.
+
+    One caveat, and it is the reason this is opt-in rather than automatic: a single traversal means a
+    single acceptance criterion, hence one ``theta`` for every field requested.  The tidal tensor is a
+    derivative higher than the potential and so wants a *smaller* theta for equal fractional accuracy, so
+    a fused call runs everything at the strictest requirement.  If you want the potential at theta=0.7 and
+    the tidal tensor at 0.4, two separate calls are genuinely cheaper.  Conversely, when the fields are
+    wanted at one theta, fusing gives them a common accepted-node set and hence a mutually consistent
+    truncation, which separate walks at different theta do not.
+
+    Returns:
+    dict with the requested keys: ``"potential"`` shape (N,), ``"accel"`` shape (N,3), ``"tidal"`` shape
+    (N,3,3) -- each a view into one contiguous (N, W) buffer, in the same order as ``pos``.
+    """
+    if not (potential or accel or tidal):
+        raise ValueError("request at least one of potential=True, accel=True, tidal=True")
+    core = _get_core(potential, accel, tidal, quadrupole, parallel)
+    out = core(pos, soft, tree, group_size, theta, G, _field_width(potential, accel, tidal))
+    result = {}
+    o = 0
+    if potential:
+        result["potential"] = out[:, 0]
+        o = 1
+    if accel:
+        result["accel"] = out[:, o : o + 3]
+        o += 3
+    if tidal:
+        result["tidal"] = out[:, o : o + 9].reshape(-1, 3, 3)
+    return result
