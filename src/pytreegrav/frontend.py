@@ -184,11 +184,12 @@ def Potential(
 
     device: str, optional
         'cpu' (default) or 'cuda'; 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the
-        monopole tree method only. Being float32, its error against this path on a STARFORGE snapshot
-        was 5e-8 median / 1e-3 worst (potential) and 5e-7 / 5e-3 (acceleration) -- the tail set by
-        acceptance-test flips at the opening-angle boundary, so bounded by theta's own ~2e-3 error
-        rather than machine precision. Uploads the tree every call; for repeated evaluation hold a
-        pytreegrav.cuda.CudaPotential/CudaAccel instead.
+        monopole tree and brute-force methods. Being float32, its error against this path on a
+        STARFORGE snapshot was 1.3e-7 median / 7.5e-6 worst (potential) and 2.0e-9 / 1.9e-4
+        (acceleration) -- the tail set by acceptance-test flips at the opening-angle boundary, so bounded
+        by theta's own ~2e-3 error rather than machine precision. Uploads the tree (or sources) each call;
+        for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce
+        counterparts instead.
 
     Returns
     -------
@@ -221,7 +222,11 @@ def Potential(
         raise ValueError("device='cuda' is monopole only; pass quadrupole=False")
 
     if method == "bruteforce":  # we're using brute force
-        if parallel:
+        if device == "cuda":
+            from .cuda import CudaPotentialBruteforce  # lazy: numba-cuda is an optional extra
+
+            phi = CudaPotentialBruteforce(pos, m, softening)(pos, softening, G=G)
+        elif parallel:
             # the symmetrized kernel runs two parallel regions and per-thread buffers;
             # that only pays for itself once there are enough interactions to amortize it
             if len(pos) >= SYMMETRIC_NMIN:
@@ -458,11 +463,12 @@ def Accel(
 
     device: str, optional
         'cpu' (default) or 'cuda'; 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the
-        monopole tree method only. Being float32, its error against this path on a STARFORGE snapshot
-        was 5e-8 median / 1e-3 worst (potential) and 5e-7 / 5e-3 (acceleration) -- the tail set by
-        acceptance-test flips at the opening-angle boundary, so bounded by theta's own ~2e-3 error
-        rather than machine precision. Uploads the tree every call; for repeated evaluation hold a
-        pytreegrav.cuda.CudaPotential/CudaAccel instead.
+        monopole tree and brute-force methods. Being float32, its error against this path on a
+        STARFORGE snapshot was 1.3e-7 median / 7.5e-6 worst (potential) and 2.0e-9 / 1.9e-4
+        (acceleration) -- the tail set by acceptance-test flips at the opening-angle boundary, so bounded
+        by theta's own ~2e-3 error rather than machine precision. Uploads the tree (or sources) each call;
+        for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce
+        counterparts instead.
 
     Returns
     -------
@@ -490,7 +496,11 @@ def Accel(
         raise ValueError("device='cuda' is monopole only; pass quadrupole=False")
 
     if method == "bruteforce":  # we're using brute force
-        if parallel:
+        if device == "cuda":
+            from .cuda import CudaAccelBruteforce  # lazy: numba-cuda is an optional extra
+
+            g = CudaAccelBruteforce(pos, m, softening)(pos, softening, G=G)
+        elif parallel:
             # see the note in Potential: small problems stay on the simpler kernel
             if len(pos) >= SYMMETRIC_NMIN:
                 g = Accel_bruteforce_symmetric(pos, m, softening, G=G)
@@ -726,12 +736,14 @@ def DensityCorrFunc(
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
         rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
+    built_tree = tree is None
     if tree is None:
         softening = np.zeros_like(m)
         tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening))  # build the tree if needed
-    idx = tree.TreewalkIndices
-
-    # sort by the order they appear in the treewalk to improve access pattern efficiency
+    # Sort pos rather than applying the tree's stored permutation -- see the note in Potential. The
+    # output is a binned aggregate, so sigma^2 was still a valid sample; the real failure was that a
+    # supplied tree of a different size indexed out of bounds.
+    idx = tree.TreewalkIndices if built_tree else _morton_order(np.float64(pos))
     pos_sorted = np.take(pos, idx, axis=0)
 
     if parallel:
@@ -813,12 +825,14 @@ def VelocityCorrFunc(
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
         rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
+    built_tree = tree is None
     if tree is None:
         softening = np.zeros_like(m)
         tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening), vel=v)  # build the tree if needed
-    idx = tree.TreewalkIndices
-
-    # sort by the order they appear in the treewalk to improve access pattern efficiency
+    # Sort pos rather than applying the tree's stored permutation -- see the note in Potential. The
+    # output is a binned aggregate, so sigma^2 was still a valid sample; the real failure was that a
+    # supplied tree of a different size indexed out of bounds.
+    idx = tree.TreewalkIndices if built_tree else _morton_order(np.float64(pos))
     pos_sorted = np.take(pos, idx, axis=0)
     v_sorted = np.take(v, idx, axis=0)
     wt_sorted = np.take(m, idx, axis=0)
@@ -905,12 +919,14 @@ def VelocityStructFunc(
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
         rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
+    built_tree = tree is None
     if tree is None:
         softening = np.zeros_like(m)
         tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening), vel=v)  # build the tree if needed
-    idx = tree.TreewalkIndices
-
-    # sort by the order they appear in the treewalk to improve access pattern efficiency
+    # Sort pos rather than applying the tree's stored permutation -- see the note in Potential. The
+    # output is a binned aggregate, so sigma^2 was still a valid sample; the real failure was that a
+    # supplied tree of a different size indexed out of bounds.
+    idx = tree.TreewalkIndices if built_tree else _morton_order(np.float64(pos))
     pos_sorted = np.take(pos, idx, axis=0)
     v_sorted = np.take(v, idx, axis=0)
     wt_sorted = np.take(m, idx, axis=0)

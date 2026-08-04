@@ -10,7 +10,14 @@ is idempotent and indexes ``pos`` by construction, so it covers both.
 import numpy as np
 import pytest
 
-from pytreegrav import Accel, ConstructTree, Potential
+from pytreegrav import (
+    Accel,
+    ConstructTree,
+    DensityCorrFunc,
+    Potential,
+    VelocityCorrFunc,
+    VelocityStructFunc,
+)
 from pytreegrav.grouped_treewalk import _morton_order
 
 
@@ -18,6 +25,13 @@ def cloud(n, seed=42):
     rng = np.random.default_rng(seed)
     x = np.ascontiguousarray(rng.normal(size=(n, 3)))
     return x, np.ones(n) / n, np.full(n, 2.0 * n ** (-1 / 3))
+
+
+def cloud_with_velocity(n, seed=42):
+    rng = np.random.default_rng(seed)
+    x = np.ascontiguousarray(rng.normal(size=(n, 3)))
+    v = np.ascontiguousarray(rng.normal(size=(n, 3)))
+    return x, v, np.ones(n) / n
 
 
 def rel(a, b):
@@ -82,3 +96,67 @@ def test_target_order_independence(fn):
     ref = fn(x, m, h, tree=tree, parallel=True)
     got = fn(np.ascontiguousarray(x[perm]), m, np.ascontiguousarray(h[perm]), tree=tree, parallel=True)
     assert rel(got, np.take(ref, perm, axis=0)) < 1e-14
+
+
+# --------------------------------------------------------------------------------------------------
+# The correlation functions applied tree.TreewalkIndices to pos unconditionally too, but the defect
+# there was narrower: they return binned aggregates, not per-particle arrays, so X[sigma^2] is still a
+# valid sample and only the IndexError on a larger supplied tree was a real failure.
+#
+# They are NOT order-invariant, by design: a node is binned wholesale once it is small relative to the
+# bin, and target grouping decides which nodes reach that test.  Below, order-dependence is 4e-3 at
+# the default max_bin_size_ratio=100 and falls to 3e-5 at 0.1 -- which is what identifies it as that
+# approximation rather than a permutation bug, and is why no tight tolerance belongs here.
+# --------------------------------------------------------------------------------------------------
+
+
+def corrfunc_cases(n):
+    """(cloud, [(callable, kwargs)]) for each correlation function, on one shared cloud."""
+    x, v, m = cloud_with_velocity(n)
+    rbins = np.geomspace(0.05, 4.0, 8)
+    return x, v, m, [
+        (DensityCorrFunc, {"rbins": rbins}),
+        (VelocityCorrFunc, {"rbins": rbins, "v": v}),
+        (VelocityStructFunc, {"rbins": rbins, "v": v}),
+    ]
+
+
+@pytest.mark.parametrize("i", range(3))
+def test_corrfunc_supplied_tree_larger_than_pos(i):
+    """The IndexError case: a tree built on more particles than are passed as pos."""
+    x, v, m, cases = corrfunc_cases(3000)
+    fn, kw = cases[i]
+    tree = ConstructTree(x, m, np.zeros_like(m), vel=v)
+    sub = slice(None, 400)
+    kw = dict(kw)
+    if "v" in kw:
+        kw["v"] = np.ascontiguousarray(v[sub])
+    bins, vals = fn(np.ascontiguousarray(x[sub]), np.ascontiguousarray(m[sub]), tree=tree, **kw)
+    assert len(vals) == len(bins) - 1
+    assert np.all(np.isfinite(vals))
+
+
+@pytest.mark.parametrize("i", range(3))
+def test_corrfunc_order_dependence_is_the_binning_approximation(i):
+    """Pre-sorted input gives a different answer, and it must converge as the binning tightens.
+
+    A permutation bug would not care about max_bin_size_ratio; the node-acceptance approximation does.
+    """
+    x, v, m, cases = corrfunc_cases(3000)
+    fn, kw = cases[i]
+    tree = ConstructTree(x, m, np.zeros_like(m), vel=v)
+    idx = tree.TreewalkIndices
+    kw_s = dict(kw)
+    if "v" in kw_s:
+        kw_s["v"] = np.ascontiguousarray(v[idx])
+    xs, ms = np.ascontiguousarray(x[idx]), np.ascontiguousarray(m[idx])
+
+    def spread(ratio):
+        _, a = fn(x, m, tree=tree, max_bin_size_ratio=ratio, **kw)
+        _, b = fn(xs, ms, tree=tree, max_bin_size_ratio=ratio, **kw_s)
+        return np.abs(a - b).max() / max(np.abs(a).max(), 1e-300)
+
+    # No absolute bound: VelocityCorrFunc normalizes by a correlation that is ~0 for a random cloud,
+    # so its relative spread is meaningless in isolation.  Convergence is what discriminates.
+    loose, tight = spread(100), spread(0.1)
+    assert tight < loose / 10, f"did not converge with the binning: {loose:.1e} -> {tight:.1e}"

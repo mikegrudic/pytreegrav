@@ -15,9 +15,12 @@ import numpy as np
 import pytest
 
 from pytreegrav import Accel, ConstructTree, Potential
+from pytreegrav.bruteforce import Accel_bruteforce, Potential_bruteforce, PotentialTarget_bruteforce
 from pytreegrav.cuda import (
     CudaAccel,
+    CudaAccelBruteforce,
     CudaPotential,
+    CudaPotentialBruteforce,
     accel_packed_cpu,
     is_available,
     pack_tree_gravity,
@@ -231,15 +234,34 @@ def test_gravity_backend_needs_no_cuda_to_import():
 
 @needs_cuda
 @pytest.mark.parametrize("fn,cls", [(Potential, CudaPotential), (Accel, CudaAccel)])
-def test_frontend_device_cuda_matches_cpu(fn, cls):
-    """The device="cuda" flag must agree with the CPU tree path to within the float32 tail."""
+def test_frontend_device_cuda_matches_the_ungrouped_cpu_walk(fn, cls):
+    """device="cuda" must reproduce the algorithm it actually implements: the *ungrouped* walk.
+
+    Comparing against the default grouped CPU path instead measures grouping, not precision -- it opens
+    a superset of nodes, a theta-level difference.  Measured at N=20000: 8.6e-07 against group_size=1
+    but 7.3e-03 against the default, and both figures are unchanged if the device kernels are compiled
+    in float64, which is what proves the gap is not roundoff.
+    """
+    x, m, h = cloud(20000)
+    tree = ConstructTree(x, m, h)
+    cpu = fn(x, m, h, tree=tree, parallel=True, theta=THETA, group_size=1)
+    gpu = fn(x, m, h, tree=tree, theta=THETA, device="cuda")
+    assert gpu.shape == cpu.shape
+    d = np.abs(gpu - cpu)
+    assert np.sqrt((d**2).mean()) / np.abs(cpu).std() < 1e-5
+    assert d.max() / np.abs(cpu).max() < 1e-5
+
+
+@needs_cuda
+@pytest.mark.parametrize("fn", [Potential, Accel])
+def test_frontend_device_cuda_stays_within_truncation_of_the_grouped_path(fn):
+    """The grouped CPU path is what users get by default, so bound the difference -- but at theta's
+    level, since that is what a different node set costs.  theta=0.7 is ~2e-3 RMS."""
     x, m, h = cloud(20000)
     tree = ConstructTree(x, m, h)
     cpu = fn(x, m, h, tree=tree, parallel=True, theta=THETA)
     gpu = fn(x, m, h, tree=tree, theta=THETA, device="cuda")
-    assert gpu.shape == cpu.shape
-    d = np.abs(gpu - cpu)
-    assert np.sqrt((d**2).mean()) / np.abs(cpu).std() < 1e-4
+    assert np.abs(gpu - cpu).max() / np.abs(cpu).max() < 0.05
 
 
 @pytest.mark.parametrize("fn", [Potential, Accel])
@@ -250,3 +272,77 @@ def test_frontend_rejects_bad_device_combinations(fn):
         fn(x, m, h, device="gpu")
     with pytest.raises(ValueError, match="monopole only"):
         fn(x, m, h, device="cuda", quadrupole=True)
+
+
+# --------------------------------------------------------------------------------------------------
+# Brute force.  Exact by construction, so unlike the tree walks there is no theta tail to excuse a loose
+# tolerance -- the only error is float32 accumulation over N terms.  That grows as sqrt(N), measured on
+# an A6000 for the worst case (acceleration, h=0): 2.4e-6 at N=1e3, 1.4e-5 at 4097, 3.3e-5 at 2e4,
+# 5.1e-5 at 6e4.  So the bound scales the same way rather than being flat, which keeps it tight enough
+# at small N to catch a regression there.
+# --------------------------------------------------------------------------------------------------
+
+
+def bf_tol(n):
+    """sqrt(N) float32 accumulation bound, with ~1.5-4x headroom over the measurements above."""
+    return 1e-5 * np.sqrt(n / 1000)
+
+
+@needs_cuda
+@pytest.mark.parametrize("n", [1000, 4097, 20000])
+@pytest.mark.parametrize("soft", ["zero", "uniform", "varying"])
+def test_cuda_bruteforce_matches_the_cpu_kernels(n, soft):
+    """4097 is deliberately not a multiple of TILE=128, so the ragged last tile is covered."""
+    x, m, h = cloud(n)
+    if soft == "zero":
+        h = np.zeros(n)
+    elif soft == "uniform":
+        h = np.full(n, 0.05)
+    p_ref = Potential_bruteforce(x, m, h)
+    a_ref = Accel_bruteforce(x, m, h)
+    assert rel_scalar(CudaPotentialBruteforce(x, m, h)(x, h), p_ref) < bf_tol(n)
+    assert rel_vec(CudaAccelBruteforce(x, m, h)(x, h), a_ref).max() < bf_tol(n)
+
+
+@needs_cuda
+def test_cuda_bruteforce_excludes_the_self_interaction():
+    """The r > 0 guard is the only thing dropping the self term, and it needs the target to be
+    bit-identical to its own source row -- the same float32-narrowing contract as the tree walks."""
+    x, m, h = cloud(3000)
+    h = np.full(len(x), 0.1)  # large enough that a spurious self term lands in the softened branch
+    got = CudaPotentialBruteforce(x, m, h)(x, h)
+    assert rel_scalar(got, Potential_bruteforce(x, m, h)) < bf_tol(len(x))
+    # a spurious self term would be -2.8*m/h, orders of magnitude above the tolerance above
+    assert np.abs(-2.8 * m[0] / h[0]) / np.abs(got).max() > 100 * bf_tol(len(x))
+
+
+@needs_cuda
+def test_cuda_bruteforce_separate_targets_and_sources():
+    """Targets need not be the sources; with disjoint sets no self term arises at all."""
+    x, m, h = cloud(4000)
+    ct = np.ascontiguousarray
+    src, ms, hs = ct(x[:3000]), ct(m[:3000]), ct(h[:3000])
+    tgt, ht = ct(x[3000:]), ct(h[3000:])
+    ref = PotentialTarget_bruteforce(tgt, ht, src, ms, hs)
+    assert rel_scalar(CudaPotentialBruteforce(src, ms, hs)(tgt, ht), ref) < bf_tol(len(src))
+
+
+@needs_cuda
+def test_cuda_bruteforce_g_scaling_and_reuse():
+    """One uploaded source set, many queries: G must scale linearly and repeats must be identical."""
+    x, m, h = cloud(2000)
+    ctx = CudaAccelBruteforce(x, m, h)
+    a1 = ctx(x, h)
+    assert np.array_equal(a1, ctx(x, h))
+    assert rel_vec(ctx(x, h, G=2.5), 2.5 * a1).max() < 1e-6
+
+
+@needs_cuda
+@pytest.mark.parametrize("fn,method", [(Potential, "bruteforce"), (Accel, "bruteforce")])
+def test_frontend_device_cuda_bruteforce_matches_cpu(fn, method):
+    """device='cuda' must actually reach the GPU brute force rather than silently staying on the CPU."""
+    x, m, h = cloud(5000)
+    cpu = fn(x, m, h, method=method, parallel=True)
+    gpu = fn(x, m, h, method=method, device="cuda")
+    assert gpu.shape == cpu.shape
+    assert np.abs(gpu - cpu).max() / np.abs(cpu).max() < bf_tol(len(x))

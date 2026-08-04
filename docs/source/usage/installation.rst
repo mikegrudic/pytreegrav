@@ -72,8 +72,8 @@ and by importing the pytreegrav Python frontend in Python
 Optional: GPU acceleration
 --------------------------
 
-Column density and monopole gravity have an optional CUDA backend -- roughly 8x and 5x faster than the
-parallel CPU walks on clustered production data. Install the extra with
+Column density, monopole tree gravity and brute-force gravity have an optional CUDA backend -- roughly
+12x, 21x and 40x faster than the parallel CPU paths on clustered production data. Install the extra with
 
 .. code-block:: bash
 

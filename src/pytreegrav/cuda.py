@@ -1,8 +1,8 @@
-"""Optional CUDA backend: ray-traced column density, and monopole gravity.
+"""Optional CUDA backend: ray-traced column density, monopole gravity, and brute-force gravity.
 
 Deliberately not imported by ``pytreegrav/__init__.py``, so ``import pytreegrav`` works with no CUDA
 installed.  Requires ``pip install pytreegrav[cuda]``.  Either hold a context, which packs and uploads
-the tree once and is the point for repeated evaluation::
+the tree (or the sources) once and is the point for repeated evaluation::
 
     from pytreegrav.cuda import CudaColumnDensity, CudaPotential, CudaAccel
     ctx = CudaColumnDensity(tree);  columns = ctx(pos, rays)
@@ -11,14 +11,14 @@ the tree once and is the point for repeated evaluation::
 or pass ``device="cuda"`` to ColumnDensity/Potential/Accel, which uploads on every call.
 
 Measured on an RTX A6000 against the shipped grouped CPU walks on 32 Xeon Gold 6244 threads, on a real
-STARFORGE snapshot (24.7M gas particles): 8.2x for 6-ray column density, and for monopole gravity 8.4x
-(potential) / 6.4x (acceleration) with the context reused, 3.7x / 3.6x single-shot -- gravity walks are
-short enough that the one-off tree upload is a large share of one call.  Smooth
-synthetic clouds give up to 18x, so quote the former -- clustered data puts very unequal walks in one
-warp, and the packed tree swamps a 6 MB L2.  Kernels compile to 35-44 registers and zero local memory
-(97-100% occupancy) because the walk is stackless: its whole state is one integer cursor threaded
-through NextBranch/FirstSubnode, where a conventional traversal would need a per-thread stack in local
-memory.
+STARFORGE snapshot (22.3M gas particles, 33.5M nodes): 12.3x for 6-ray column density (52 s vs 638 s),
+and for monopole gravity 20.9x (potential) / 21.4x (acceleration) with the context reused, 5.5x / 5.9x
+single-shot -- gravity walks are short enough that the one-off tree upload dominates one call.  Brute
+force runs at 387 Gpair/s against roughly 10 on 32 threads.  Clustered data is the harder case, putting
+very unequal walks in one warp and swamping a 6 MB L2, so these are the figures to expect rather than
+the better ones smooth synthetic clouds give.  The walk kernels need few registers and no local memory
+because the traversal is stackless: its whole state is one integer cursor threaded through
+NextBranch/FirstSubnode, where a conventional traversal would need a per-thread stack in local memory.
 
 Common to all three: one independent cursor per thread, so no cooperation between lanes and no warp
 intrinsics.  Grouping is left to the warp -- 32 Morton-adjacent targets hold the same node index for
@@ -30,18 +30,59 @@ One thing the ray walk must do differently from the CPU: the impact parameter is
 not ``r^2 - z^2``.  That subtraction cancels for a nearly radial ray with relative error ~eps (r/b)^2 -- a
 harmless 3.6e-12 in float64, but measured 2.0e-02 in float32.  The stable form is a prerequisite for
 float32, not an optimization.  See the per-quantity sections below for accuracy figures.
+
+Getting float32 is not automatic and is not visible in the source; see ``_numerics``.  Every kernel here
+was once silently doing float64 arithmetic on float32 arrays, which on a 1:32-FP64 device cost 39-55x on
+brute force and 4-6x on the tree walks.  If you touch these bodies, check the generated PTX for ``.f64``
+rather than trusting the array dtypes::
+
+    ptx = list(kernel.overloads.values())[0].inspect_asm(cc)   # expect zero '.f64'
 """
 
 import math
 
 import numpy as np
-from numba import njit
+from numba import float32, float64, njit
 
-__all__ = ["CudaAccel", "CudaColumnDensity", "CudaPotential", "is_available", "pack_tree", "pack_tree_gravity"]
+__all__ = [
+    "CudaAccel",
+    "CudaAccelBruteforce",
+    "CudaColumnDensity",
+    "CudaPotential",
+    "CudaPotentialBruteforce",
+    "is_available",
+    "pack_tree",
+    "pack_tree_gravity",
+]
 
 FAC_DENSITY = 3.0 / (4.0 * np.pi)
 R_EFF_COEFF = 0.8660254037844386  # sqrt(3)/2, the cube half-diagonal, as in treewalk
 THREADS_X = 32  # one warp per block; measured best (486 vs 547 ms at 128, N=1e6 on an A6000)
+
+
+@njit(inline="always", fastmath=True)
+def _rsqrt_cpu(x):
+    """CPU stand-in for the device rsqrt; njit so the walk bodies can call it from nopython mode."""
+    return 1.0 / math.sqrt(x)
+
+
+def _numerics(cuda_target):
+    """``(cast, sqrt, rsqrt)`` for one compilation target, injected into the shared walk bodies.
+
+    Numba types Python float literals as float64 and ``math.sqrt`` as float64->float64, so a body
+    written naively promotes its whole accumulator chain even when every array is float32.  That is
+    invisible on the CPU and catastrophic on a 1:32-FP64 device: the brute-force kernel measured 7.4
+    Gpair/s that way against 292 with the casts, and the PTX carried zero f32 divides or sqrts.  So
+    every literal goes through ``cast`` and roots come from libdevice's f32 entry points.
+
+    ``rsqrt`` also replaces the divisions: ``m/r`` and ``m/(r*r2)`` become multiplies by rinv and
+    rinv^3, trading ``div.rn.f32`` (~10 instructions) for one SFU op already needed for ``r``.
+    """
+    if cuda_target:
+        from numba.cuda import libdevice
+
+        return float32, libdevice.sqrtf, libdevice.rsqrtf
+    return float64, math.sqrt, _rsqrt_cpu
 
 # Packed row.  Leaves and nodes overload slots 3-6, since an element is only ever one or the other.
 #   0,1,2  centre of mass          3  leaf h^2 / node (h + 0.866 size + delta)^2
@@ -115,45 +156,53 @@ def pack_tree(tree, dtype=np.float32):
 # --------------------------------------------------------------------------------------------------
 
 
-def _walk(px, py, pz, rx, ry, rz, nodes, links, npart):
-    """Column density from (px,py,pz) along unit (rx,ry,rz) over a packed tree.
+def _make_column_walk(cuda_target):
+    """Build the column-density walk body for one target; see _numerics for why it is a factory."""
+    f, sqrt, _ = _numerics(cuda_target)
+    ZERO, ONE, TWO = f(0.0), f(1.0), f(2.0)
 
-    Same physics as treewalk.ColumnDensityWalk_singleray: a node opens if its reach sphere meets the
-    forward ray; a leaf contributes the uniform-sphere chord, whole when the target lies outside the
-    sphere and only the forward half when inside.
-    """
-    col = 0.0
-    no = npart  # root
-    while no > -1:
-        dx = nodes[no, 0] - px
-        dy = nodes[no, 1] - py
-        dz = nodes[no, 2] - pz
-        r2 = dx * dx + dy * dy + dz * dz
-        z = rx * dx + ry * dy + rz * dz
-        # |d - z n|^2, not r2 - z*z -- see the module docstring; a sum of squares, so >= 0 by
-        # construction, which is also why no negative-pp2 guard is needed.
-        bx = dx - z * rx
-        by = dy - z * ry
-        bz = dz - z * rz
-        pp2 = bx * bx + by * by + bz * bz
-        s3 = nodes[no, 3]
-        if no < npart:  # leaf: h^2 in slot 3
-            if pp2 < s3:
-                chord = math.sqrt(1.0 - pp2 * nodes[no, 6])
-                if r2 > s3:  # target outside the sphere: the whole chord, if it lies ahead
-                    if z > 0.0:
-                        col += nodes[no, 5] * 2.0 * chord
-                else:  # target inside: forward half-chord only
-                    col += nodes[no, 5] * (z * nodes[no, 4] + chord)
-            no = links[no, 0]
-        else:  # node: reach^2 in slot 3
-            if r2 < s3 or (z > 0.0 and pp2 < s3):
-                no = links[no, 1]
-            else:
+    def walk(px, py, pz, rx, ry, rz, nodes, links, npart):
+        """Column density from (px,py,pz) along unit (rx,ry,rz) over a packed tree.
+
+        Same physics as treewalk.ColumnDensityWalk_singleray: a node opens if its reach sphere meets
+        the forward ray; a leaf contributes the uniform-sphere chord, whole when the target lies
+        outside the sphere and only the forward half when inside.
+        """
+        col = ZERO
+        no = npart  # root
+        while no > -1:
+            dx = nodes[no, 0] - px
+            dy = nodes[no, 1] - py
+            dz = nodes[no, 2] - pz
+            r2 = dx * dx + dy * dy + dz * dz
+            z = rx * dx + ry * dy + rz * dz
+            # |d - z n|^2, not r2 - z*z -- see the module docstring; a sum of squares, so >= 0 by
+            # construction, which is also why no negative-pp2 guard is needed.
+            bx = dx - z * rx
+            by = dy - z * ry
+            bz = dz - z * rz
+            pp2 = bx * bx + by * by + bz * bz
+            s3 = nodes[no, 3]
+            if no < npart:  # leaf: h^2 in slot 3
+                if pp2 < s3:
+                    chord = sqrt(ONE - pp2 * nodes[no, 6])
+                    if r2 > s3:  # target outside the sphere: the whole chord, if it lies ahead
+                        if z > ZERO:
+                            col += nodes[no, 5] * TWO * chord
+                    else:  # target inside: forward half-chord only
+                        col += nodes[no, 5] * (z * nodes[no, 4] + chord)
                 no = links[no, 0]
-    return col
+            else:  # node: reach^2 in slot 3
+                if r2 < s3 or (z > ZERO and pp2 < s3):
+                    no = links[no, 1]
+                else:
+                    no = links[no, 0]
+        return col
+
+    return walk
 
 
+_walk = _make_column_walk(False)
 _walk_cpu = njit(_walk, fastmath=True)
 
 
@@ -179,7 +228,7 @@ def _kernel():
     if _KERNEL is None:
         from numba import cuda
 
-        walk_dev = cuda.jit(_walk, device=True, inline=True)
+        walk_dev = cuda.jit(_make_column_walk(True), device=True, inline=True)
 
         @cuda.jit(fastmath=True)
         def kernel(pos, rays, nodes, links, npart, out):
@@ -290,51 +339,60 @@ def pack_tree_gravity(tree, dtype=np.float32):
     return packed, links
 
 
-def _potential_kernel(r, h):
-    """-1/r softened by the M4 cubic spline; mirrors kernel.PotentialKernel."""
-    if h == 0.0:
-        return -1.0 / r
-    hinv = 1.0 / h
-    q = r * hinv
-    if q <= 0.5:
-        return (-2.8 + q * q * (5.333333333333333 + q * q * (6.4 * q - 9.6))) * hinv
-    elif q <= 1.0:
+def _make_softening_kernels(cuda_target):
+    """Build the M4-spline potential/force kernels for one target; see _numerics for the why."""
+    f, _, _ = _numerics(cuda_target)
+
+    def potential_kernel(r, h):
+        """-1/r softened by the M4 cubic spline; mirrors kernel.PotentialKernel."""
+        if h == f(0.0):
+            return f(-1.0) / r
+        hinv = f(1.0) / h
+        q = r * hinv
+        if q <= f(0.5):
+            return (f(-2.8) + q * q * (f(5.333333333333333) + q * q * (f(6.4) * q - f(9.6)))) * hinv
+        elif q <= f(1.0):
+            return (
+                f(-3.2)
+                + f(0.06666666666666667) / q
+                + q * q * (f(10.666666666666666) + q * (f(-16.0) + q * (f(9.6) - f(2.1333333333333333) * q)))
+            ) * hinv
+        return f(-1.0) / r
+
+    def force_kernel(r, h):
+        """Enclosed-mass/r^3 for the M4 cubic spline; mirrors kernel.ForceKernel."""
+        if r > h:
+            return f(1.0) / (r * r * r)
+        hinv = f(1.0) / h
+        q = r * hinv
+        h3inv = hinv * hinv * hinv
+        if q <= f(0.5):
+            return (f(10.666666666666666) + q * q * (f(-38.4) + f(32.0) * q)) * h3inv
         return (
-            -3.2
-            + 0.06666666666666667 / q
-            + q * q * (10.666666666666666 + q * (-16.0 + q * (9.6 - 2.1333333333333333 * q)))
-        ) * hinv
-    return -1.0 / r
+            f(21.333333333333332)
+            - f(48.0) * q
+            + f(38.4) * q * q
+            - f(10.666666666666666) * q * q * q
+            - f(0.06666666666666667) / (q * q * q)
+        ) * h3inv
+
+    return potential_kernel, force_kernel
 
 
-def _force_kernel(r, h):
-    """Enclosed-mass/r^3 for the M4 cubic spline; mirrors kernel.ForceKernel."""
-    if r > h:
-        return 1.0 / (r * r * r)
-    hinv = 1.0 / h
-    q = r * hinv
-    h3inv = hinv * hinv * hinv
-    if q <= 0.5:
-        return (10.666666666666666 + q * q * (-38.4 + 32.0 * q)) * h3inv
-    return (
-        21.333333333333332
-        - 48.0 * q
-        + 38.4 * q * q
-        - 10.666666666666666 * q * q * q
-        - 0.06666666666666667 / (q * q * q)
-    ) * h3inv
-
-
+_potential_kernel, _force_kernel = _make_softening_kernels(False)
 _pot_kernel_cpu = njit(_potential_kernel, inline="always", fastmath=True)
 _force_kernel_cpu = njit(_force_kernel, inline="always", fastmath=True)
 
 
-def _make_grav_walks(pot_kernel, force_kernel):
+def _make_grav_walks(pot_kernel, force_kernel, cuda_target):
     """Build (potential, accel) walk bodies bound to the given softening kernels.
 
     A factory so the same source can be closed over the CPU-jitted kernels or the CUDA device ones --
-    numba will not let a cuda device function call an njit one.
+    numba will not let a cuda device function call an njit one -- and so the literals and roots can be
+    typed per target (see _numerics).
     """
+    f, sqrt, rsqrt = _numerics(cuda_target)
+    ZERO, C06 = f(0.0), f(0.6)
 
     def walk_potential(px, py, pz, soft_t, nodes, links, npart, inv_theta):
         """Potential at (px,py,pz); mirrors treewalk.PotentialWalk, monopole.
@@ -345,26 +403,27 @@ def _make_grav_walks(pot_kernel, force_kernel):
         ``-2.8 m/h``: 1.1e-02 error against 3.1e-08 when consistent.  Accel hides it (the softened
         kernel scales it by a vanishing dx), so the potential is where it surfaces.
         """
-        phi = 0.0
+        phi = ZERO
         no = npart
         while no > -1:
             dx = nodes[no, 0] - px
             dy = nodes[no, 1] - py
             dz = nodes[no, 2] - pz
-            r = math.sqrt(dx * dx + dy * dy + dz * dz)
+            r2 = dx * dx + dy * dy + dz * dz
+            r = sqrt(r2)
             h = max(nodes[no, 4], soft_t)
             if no < npart:  # leaf
-                if r > 0.0:  # neglect the self-potential
+                if r > ZERO:  # neglect the self-potential
                     if r < h:
                         phi += nodes[no, 3] * pot_kernel(r, h)
                     else:
-                        phi -= nodes[no, 3] / r
+                        phi -= nodes[no, 3] * rsqrt(r2)
                 no = links[no, 0]
             else:
                 size = nodes[no, 5]
                 delta = nodes[no, 6]
-                if r > max(size * inv_theta + delta, h + size * 0.6 + delta):
-                    phi -= nodes[no, 3] / r
+                if r > max(size * inv_theta + delta, h + size * C06 + delta):
+                    phi -= nodes[no, 3] * rsqrt(r2)
                     no = links[no, 0]
                 else:
                     no = links[no, 1]
@@ -372,23 +431,24 @@ def _make_grav_walks(pot_kernel, force_kernel):
 
     def walk_accel(px, py, pz, soft_t, nodes, links, npart, inv_theta):
         """Acceleration at (px,py,pz); mirrors treewalk.AccelWalk, monopole."""
-        ax = 0.0
-        ay = 0.0
-        az = 0.0
+        ax = ZERO
+        ay = ZERO
+        az = ZERO
         no = npart
         while no > -1:
             dx = nodes[no, 0] - px
             dy = nodes[no, 1] - py
             dz = nodes[no, 2] - pz
             r2 = dx * dx + dy * dy + dz * dz
-            r = math.sqrt(r2)
+            r = sqrt(r2)
             h = max(nodes[no, 4], soft_t)
             if no < npart:  # leaf
-                if r > 0.0:  # no self-force
+                if r > ZERO:  # no self-force
                     if r < h:
                         fac = nodes[no, 3] * force_kernel(r, h)
                     else:
-                        fac = nodes[no, 3] / (r * r2)
+                        rinv = rsqrt(r2)
+                        fac = nodes[no, 3] * rinv * rinv * rinv
                     ax += fac * dx
                     ay += fac * dy
                     az += fac * dz
@@ -396,8 +456,9 @@ def _make_grav_walks(pot_kernel, force_kernel):
             else:
                 size = nodes[no, 5]
                 delta = nodes[no, 6]
-                if r > max(size * inv_theta + delta, h + size * 0.6 + delta):
-                    fac = nodes[no, 3] / (r * r2)
+                if r > max(size * inv_theta + delta, h + size * C06 + delta):
+                    rinv = rsqrt(r2)
+                    fac = nodes[no, 3] * rinv * rinv * rinv
                     ax += fac * dx
                     ay += fac * dy
                     az += fac * dz
@@ -409,7 +470,7 @@ def _make_grav_walks(pot_kernel, force_kernel):
     return walk_potential, walk_accel
 
 
-_walk_pot_py, _walk_acc_py = _make_grav_walks(_pot_kernel_cpu, _force_kernel_cpu)
+_walk_pot_py, _walk_acc_py = _make_grav_walks(_pot_kernel_cpu, _force_kernel_cpu, False)
 _walk_pot_cpu = njit(_walk_pot_py, fastmath=True)
 _walk_acc_cpu = njit(_walk_acc_py, fastmath=True)
 
@@ -444,9 +505,10 @@ def _grav_kernels():
     if _GRAV_KERNELS is None:
         from numba import cuda
 
-        pk = cuda.jit(_potential_kernel, device=True, inline=True)
-        fk = cuda.jit(_force_kernel, device=True, inline=True)
-        wp, wa = _make_grav_walks(pk, fk)
+        pk_py, fk_py = _make_softening_kernels(True)
+        pk = cuda.jit(pk_py, device=True, inline=True)
+        fk = cuda.jit(fk_py, device=True, inline=True)
+        wp, wa = _make_grav_walks(pk, fk, True)
         wp = cuda.jit(wp, device=True, inline=True)
         wa = cuda.jit(wa, device=True, inline=True)
 
@@ -539,3 +601,190 @@ class CudaAccel(_CudaGravity):
     def __call__(self, pos, softening=None, G=1.0, theta=0.7):
         """Acceleration at ``pos``, shape (N, 3)."""
         return self._run(_grav_kernels()[1], pos, softening, G, theta, 3)
+
+
+# --------------------------------------------------------------------------------------------------
+# Brute force.  Exact direct summation, no tree.  One thread per target; sources are staged through
+# shared memory a tile at a time so each source load is reused TILE times, giving O(TILE) flop/byte
+# instead of O(1).  Useful as an exact reference and for the small-N regime where a tree does not pay;
+# it is O(N^2), so the shipped CPU tree beats it above N~1e5 however fast the kernel is.
+# --------------------------------------------------------------------------------------------------
+
+TILE = 128  # threads per block and sources per shared-memory tile
+
+
+_BF_KERNELS = None
+
+
+def _bf_kernels():
+    """Compile the two CUDA brute-force kernels, lazily.
+
+    Written against cuda.* directly rather than through a shared factory: unlike the tree walks there
+    is no CPU counterpart to keep in step (bruteforce.py already has one), so injecting the intrinsics
+    would buy nothing.
+    """
+    global _BF_KERNELS
+    if _BF_KERNELS is not None:
+        return _BF_KERNELS
+    from numba import cuda
+
+    _, sqrt, rsqrt = _numerics(True)
+    pk_py, fk_py = _make_softening_kernels(True)
+    pot_kernel = cuda.jit(pk_py, device=True, inline=True)
+    force_kernel = cuda.jit(fk_py, device=True, inline=True)
+    ZERO = float32(0.0)
+
+    @cuda.jit(fastmath=True)
+    def kpot(pos_t, soft_t, x, m, h, out):
+        sx = cuda.shared.array(TILE, float32)
+        sy = cuda.shared.array(TILE, float32)
+        sz = cuda.shared.array(TILE, float32)
+        sm = cuda.shared.array(TILE, float32)
+        sh = cuda.shared.array(TILE, float32)
+        i = cuda.grid(1)
+        tid = cuda.threadIdx.x
+        n, ns = pos_t.shape[0], x.shape[0]
+        px = pos_t[i, 0] if i < n else ZERO
+        py = pos_t[i, 1] if i < n else ZERO
+        pz = pos_t[i, 2] if i < n else ZERO
+        ht = soft_t[i] if i < n else ZERO
+        phi = ZERO
+        for base in range(0, ns, TILE):
+            j = base + tid
+            if j < ns:
+                sx[tid] = x[j, 0]
+                sy[tid] = x[j, 1]
+                sz[tid] = x[j, 2]
+                sm[tid] = m[j]
+                sh[tid] = h[j]
+            cuda.syncthreads()
+            if i < n:
+                for k in range(min(TILE, ns - base)):
+                    dx = sx[k] - px
+                    dy = sy[k] - py
+                    dz = sz[k] - pz
+                    r2 = dx * dx + dy * dy + dz * dz
+                    r = sqrt(r2)
+                    if r > ZERO:  # self term excluded, as in the CPU kernels
+                        hij = max(sh[k], ht)
+                        if r < hij:
+                            phi += sm[k] * pot_kernel(r, hij)
+                        else:
+                            phi -= sm[k] * rsqrt(r2)
+            cuda.syncthreads()
+        if i < n:
+            out[i] = phi
+
+    @cuda.jit(fastmath=True)
+    def kacc(pos_t, soft_t, x, m, h, out):
+        sx = cuda.shared.array(TILE, float32)
+        sy = cuda.shared.array(TILE, float32)
+        sz = cuda.shared.array(TILE, float32)
+        sm = cuda.shared.array(TILE, float32)
+        sh = cuda.shared.array(TILE, float32)
+        i = cuda.grid(1)
+        tid = cuda.threadIdx.x
+        n, ns = pos_t.shape[0], x.shape[0]
+        px = pos_t[i, 0] if i < n else ZERO
+        py = pos_t[i, 1] if i < n else ZERO
+        pz = pos_t[i, 2] if i < n else ZERO
+        ht = soft_t[i] if i < n else ZERO
+        ax = ZERO
+        ay = ZERO
+        az = ZERO
+        for base in range(0, ns, TILE):
+            j = base + tid
+            if j < ns:
+                sx[tid] = x[j, 0]
+                sy[tid] = x[j, 1]
+                sz[tid] = x[j, 2]
+                sm[tid] = m[j]
+                sh[tid] = h[j]
+            cuda.syncthreads()
+            if i < n:
+                for k in range(min(TILE, ns - base)):
+                    dx = sx[k] - px
+                    dy = sy[k] - py
+                    dz = sz[k] - pz
+                    r2 = dx * dx + dy * dy + dz * dz
+                    r = sqrt(r2)
+                    if r > ZERO:
+                        hij = max(sh[k], ht)
+                        if r < hij:
+                            fac = sm[k] * force_kernel(r, hij)
+                        else:
+                            rinv = rsqrt(r2)
+                            fac = sm[k] * rinv * rinv * rinv
+                        ax += fac * dx
+                        ay += fac * dy
+                        az += fac * dz
+            cuda.syncthreads()
+        if i < n:
+            out[i, 0] = ax
+            out[i, 1] = ay
+            out[i, 2] = az
+
+    _BF_KERNELS = (kpot, kacc)
+    return _BF_KERNELS
+
+
+class _CudaBruteforce:
+    """Shared base for the exact direct-summation contexts: uploads the source particles once."""
+
+    def __init__(self, pos, m, softening=None):
+        from numba import cuda
+
+        if not is_available():
+            raise RuntimeError(
+                "no CUDA device available. pytreegrav.cuda needs numba-cuda (pip install "
+                "pytreegrav[cuda]) and a visible NVIDIA GPU."
+            )
+        pos = np.ascontiguousarray(pos, dtype=np.float32)
+        n = pos.shape[0]
+        soft = (
+            np.zeros(n, np.float32)
+            if softening is None
+            else np.ascontiguousarray(np.broadcast_to(np.asarray(softening, np.float32), (n,)))
+        )
+        self.d_x = cuda.to_device(pos)
+        self.d_m = cuda.to_device(np.ascontiguousarray(m, dtype=np.float32))
+        self.d_h = cuda.to_device(soft)
+        self.n_src = n
+        self.device_bytes = pos.nbytes + self.d_m.nbytes + soft.nbytes
+
+    def _run(self, kernel, pos, softening, G, width):
+        from numba import cuda
+
+        pos = np.ascontiguousarray(pos, dtype=np.float32)
+        n = pos.shape[0]
+        soft = (
+            np.zeros(n, np.float32)
+            if softening is None
+            else np.ascontiguousarray(np.broadcast_to(np.asarray(softening, np.float32), (n,)))
+        )
+        d_out = cuda.device_array((n,) if width == 1 else (n, width), dtype=np.float32)
+        kernel[(n + TILE - 1) // TILE, TILE](
+            cuda.to_device(pos), cuda.to_device(soft), self.d_x, self.d_m, self.d_h, d_out
+        )
+        return G * d_out.copy_to_host()
+
+
+class CudaPotentialBruteforce(_CudaBruteforce):
+    """Exact direct-summation potential on a CUDA device, against one uploaded source set.
+
+    Targets default to the sources, giving the self-potential with the self term excluded.
+    """
+
+    def __call__(self, pos=None, softening=None, G=1.0):
+        if pos is None:
+            return self._run(_bf_kernels()[0], self.d_x.copy_to_host(), self.d_h.copy_to_host(), G, 1)
+        return self._run(_bf_kernels()[0], pos, softening, G, 1)
+
+
+class CudaAccelBruteforce(_CudaBruteforce):
+    """Exact direct-summation acceleration on a CUDA device.  See CudaPotentialBruteforce."""
+
+    def __call__(self, pos=None, softening=None, G=1.0):
+        if pos is None:
+            return self._run(_bf_kernels()[1], self.d_x.copy_to_host(), self.d_h.copy_to_host(), G, 3)
+        return self._run(_bf_kernels()[1], pos, softening, G, 3)
