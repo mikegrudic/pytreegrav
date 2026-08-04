@@ -259,8 +259,26 @@ ctx = CudaColumnDensity(tree)                 # pack + upload once
 columns = ctx(pos, rays)                      # per-call transfers are ~2% of runtime
 ```
 
-`pytreegrav.cuda` is never imported by the package itself, so a CPU-only install is unaffected.
-Applies to the ray-traced path only (`rays` given, `randomize_rays` off), not the 6-bin estimator.
+Monopole gravity has the same flag:
+
+```python
+phi = Potential(x, m, h, theta=0.7, device="cuda")   # or Accel(...)
+```
+
+Gravity walks are short — ~1 µs/particle on the CPU against ~35 µs for a 6-ray column density — so the
+one-off tree upload is a much bigger share of a single gravity call. On that snapshot, reusing a
+`CudaPotential`/`CudaAccel` context gives **8.4x** and **6.4x** (2.9 s and 3.7 s against 24 s on 32
+threads); the single-shot flag above, which uploads every call, gives **3.7x** and **3.6x**.
+
+Measured float32 error against the *same algorithm* in float64: potential 5.5e-8 median / 1.2e-3 worst,
+acceleration 5.7e-7 / 5.3e-3. The tail comes from the acceptance test flipping for nodes on the
+opening-angle boundary, so it is bounded by `theta`'s own ~2e-3 error rather than by machine precision.
+Against the shipped CPU path the difference is larger (median 6e-5 and 2e-4 of the RMS field) but that
+is mostly the CPU's target grouping opening a superset of nodes, not precision.
+
+`pytreegrav.cuda` is never imported by the package itself, so a CPU-only install is unaffected. For
+column density it applies to the ray-traced path only (`rays` given, `randomize_rays` off), not the
+6-bin estimator; for gravity it is the tree method, monopole only.
 
 # Community
 

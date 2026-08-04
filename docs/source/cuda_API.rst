@@ -1,9 +1,9 @@
 .. _cuda:
 
-GPU-accelerated ray-tracing
-===========================
+GPU acceleration
+================
 
-The ray-traced column density path has an optional CUDA backend, benchmarked on an NVIDIA RTX A6000
+Column density and monopole gravity have an optional CUDA backend, benchmarked on an NVIDIA RTX A6000
 against 32 Xeon Gold 6244 threads:
 
 .. list-table::
@@ -15,6 +15,8 @@ against 32 Xeon Gold 6244 threads:
      - **7.9x**
    * - smooth synthetic clouds, :math:`N = 10^5` / :math:`10^6` / :math:`3 \times 10^6`
      - 11.8x / 15.1x / 18.2x
+   * - monopole ``Potential`` / ``Accel``, same snapshot, context reused
+     - **8.4x / 6.4x**
 
 Expect the former on production data. Clustered structure is the harder case for a GPU: a warp can
 hold both dense-core and diffuse-gas sightlines at once, so lanes wait on each other, and at 24.7M
@@ -99,6 +101,70 @@ call, transfers are then about 2% of runtime:
 Supplying targets in the tree's Morton order matters for speed but not for correctness: 32 adjacent
 targets tracing one direction hold the same node index for most of the descent, so the tree row fetch
 broadcasts across the warp. Any other order returns the same answer more slowly.
+
+Gravity
+-------
+
+``Potential`` and ``Accel`` take the same ``device="cuda"`` flag. Monopole only -- quadrupoles would
+need six more slots per node and a second cache line, and the float32 headroom means monopole at a
+smaller ``theta`` is usually the better trade:
+
+.. code-block:: python
+
+    from pytreegrav import Potential, Accel
+
+    phi = Potential(x, m, h, theta=0.7, device="cuda")
+    acc = Accel(x, m, h, theta=0.7, device="cuda")
+
+Or hold a context, which is the point for repeated evaluation against one mass distribution -- an
+N-body step, or a binding-energy sweep over many candidate groups:
+
+.. code-block:: python
+
+    from pytreegrav.cuda import CudaPotential, CudaAccel
+
+    ctx = CudaPotential(tree)          # pack + upload once
+    phi = ctx(pos, softening, G=1.0, theta=0.7)
+
+``theta`` is a per-call argument rather than baked into the packed tree, so one upload serves any
+opening angle.
+
+Hold the context if you can. Gravity walks are short -- roughly 1 us per particle on the CPU against
+35 us for a 6-ray column density -- so the one-off pack-and-upload of the tree is a much larger share
+of a single gravity call. At N=2.5e7 the walks are 2.9 s (potential) and 3.7 s (acceleration) against
+24 s and 24 s on 32 CPU threads, with a 3-4 s upload: reusing a context gives 8.4x and 6.4x, while a
+bare ``Potential(..., device="cuda")`` that uploads every call gives 3.7x and 3.6x.
+
+Accuracy, measured against the float64 CPU walk on the same STARFORGE snapshot:
+
+.. list-table::
+   :header-rows: 1
+
+   * -
+     - median
+     - p99
+     - max
+   * - potential
+     - 5.5e-8
+     - 2.8e-7
+     - 1.2e-3
+   * - acceleration
+     - 5.7e-7
+     - 5.9e-5
+     - 5.3e-3
+
+These are against the *same* algorithm in float64, which is what isolates the cost of narrowing. The
+tail is not roundoff: it is the acceptance test flipping for a node sitting on the opening-angle
+boundary, which changes the answer by that node's own truncation error -- so the float32 error is
+bounded by :math:`\theta`'s error (~2e-3 RMS at 0.7), not by machine precision. A flip effectively
+gives you the answer for a marginally different :math:`\theta`. The potential fares better than the
+acceleration because every term shares a sign, whereas an acceleration is a vector residual.
+
+Comparing instead against the shipped ``Potential``/``Accel`` shows a larger difference (median 6e-5
+and 2e-4 of the RMS field on that snapshot). That is mostly *not* precision: the CPU path groups
+targets and so opens a superset of nodes, a :math:`\theta`-level difference in the approximation
+itself. Judge float32 by the table above, and judge both against brute force if you need an absolute
+error.
 
 Checking for a device
 ---------------------

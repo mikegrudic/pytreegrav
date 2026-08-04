@@ -147,6 +147,7 @@ def Potential(
     method="adaptive",
     quadrupole=False,
     group_size=8,
+    device="cpu",
 ):
     """Gravitational potential calculation
 
@@ -181,6 +182,14 @@ def Potential(
         equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
         grow and open more nodes. Only affects the tree method.
 
+    device: str, optional
+        'cpu' (default) or 'cuda'; 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the
+        monopole tree method only. Being float32, its error against this path on a STARFORGE snapshot
+        was 5e-8 median / 1e-3 worst (potential) and 5e-7 / 5e-3 (acceleration) -- the tail set by
+        acceptance-test flips at the opening-angle boundary, so bounded by theta's own ~2e-3 error
+        rather than machine precision. Uploads the tree every call; for repeated evaluation hold a
+        pytreegrav.cuda.CudaPotential/CudaAccel instead.
+
     Returns
     -------
     phi: array_like
@@ -195,14 +204,21 @@ def Potential(
 
     # figure out which method to use
     if method == "adaptive":
-        # Threaded brute force stays competitive to larger N. 4000 is where the parallel curves cross
+        # A supplied tree pins the method: brute force cannot use it and would silently sum only the
+        # particles in pos, a different quantity whenever the tree holds a different set. Otherwise,
+        # threaded brute force stays competitive to larger N -- 4000 is where the parallel curves cross
         # on 32 threads (Plummer, theta=0.7): at N=3447 brute-force accel is 0.57 us/particle against
         # the tree's 0.67, by N=6092 it is 0.95 against 0.68. Potential crosses nearer 5500, so this
-        # favours acceleration -- the more common call, and the steeper curve to be wrong about.
-        if len(pos) > (4000 if parallel else 1000):
+        # favours acceleration, the more common call and the steeper curve to be wrong about.
+        if tree is not None or len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"
+
+    if device not in ("cpu", "cuda"):
+        raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+    if device == "cuda" and quadrupole:
+        raise ValueError("device='cuda' is monopole only; pass quadrupole=False")
 
     if method == "bruteforce":  # we're using brute force
         if parallel:
@@ -224,24 +240,36 @@ def Potential(
                 np.float64(softening),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+            idx = tree.TreewalkIndices  # built from pos, so its walk order already indexes pos
+        else:
+            # SORT pos; don't apply the tree's stored permutation. TreewalkIndices is a fixed sigma
+            # over whatever built the tree, and is not an involution -- pos already in tree order
+            # becomes X[sigma^2]: right answer, but grouping's acceptance padding inflates 94x in a
+            # STARFORGE snapshot's densest decile (p90 group extent 0.115 -> 10.9 pc), 15 s -> 285 s.
+            # A larger supplied tree raises IndexError outright. Sorting is idempotent, fixing both.
+            idx = _morton_order(np.float64(pos))
         checkTreeQuadrupoles(tree, quadrupole)
-        idx = tree.TreewalkIndices
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
         pos_sorted = np.take(pos, idx, axis=0)
         h_sorted = np.take(softening, idx)
 
-        # pos_sorted is already in Morton order, so consecutive targets are spatially compact groups
-        phi = PotentialTarget_grouped(
-            pos_sorted,
-            h_sorted,
-            tree,
-            group_size=group_size,
-            G=G,
-            theta=theta,
-            quadrupole=quadrupole,
-            parallel=parallel,
-        )
+        if device == "cuda":
+            from .cuda import CudaPotential  # lazy: numba-cuda is an optional extra
+
+            phi = CudaPotential(tree)(pos_sorted, h_sorted, G=G, theta=theta)
+        else:
+            # pos_sorted is in Morton order, so consecutive targets are spatially compact groups
+            phi = PotentialTarget_grouped(
+                pos_sorted,
+                h_sorted,
+                tree,
+                group_size=group_size,
+                G=G,
+                theta=theta,
+                quadrupole=quadrupole,
+                parallel=parallel,
+            )
 
         # now reorder phi back to the order of the input positions
         phi = np.take(phi, idx.argsort())
@@ -393,6 +421,7 @@ def Accel(
     method="adaptive",
     quadrupole=False,
     group_size=8,
+    device="cpu",
 ):
     """Gravitational acceleration calculation
 
@@ -427,6 +456,14 @@ def Accel(
         equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
         grow and open more nodes. Only affects the tree method.
 
+    device: str, optional
+        'cpu' (default) or 'cuda'; 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the
+        monopole tree method only. Being float32, its error against this path on a STARFORGE snapshot
+        was 5e-8 median / 1e-3 worst (potential) and 5e-7 / 5e-3 (acceleration) -- the tail set by
+        acceptance-test flips at the opening-angle boundary, so bounded by theta's own ~2e-3 error
+        rather than machine precision. Uploads the tree every call; for repeated evaluation hold a
+        pytreegrav.cuda.CudaPotential/CudaAccel instead.
+
     Returns
     -------
     g: array_like
@@ -441,11 +478,16 @@ def Accel(
 
     # figure out which method to use
     if method == "adaptive":
-        # see the threshold note in Potential
-        if len(pos) > (4000 if parallel else 1000):
+        # see the method-selection note in Potential
+        if tree is not None or len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"
+
+    if device not in ("cpu", "cuda"):
+        raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+    if device == "cuda" and quadrupole:
+        raise ValueError("device='cuda' is monopole only; pass quadrupole=False")
 
     if method == "bruteforce":  # we're using brute force
         if parallel:
@@ -466,24 +508,36 @@ def Accel(
                 np.float64(softening),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+            idx = tree.TreewalkIndices  # built from pos, so its walk order already indexes pos
+        else:
+            # SORT pos; don't apply the tree's stored permutation. TreewalkIndices is a fixed sigma
+            # over whatever built the tree, and is not an involution -- pos already in tree order
+            # becomes X[sigma^2]: right answer, but grouping's acceptance padding inflates 94x in a
+            # STARFORGE snapshot's densest decile (p90 group extent 0.115 -> 10.9 pc), 15 s -> 285 s.
+            # A larger supplied tree raises IndexError outright. Sorting is idempotent, fixing both.
+            idx = _morton_order(np.float64(pos))
         checkTreeQuadrupoles(tree, quadrupole)
-        idx = tree.TreewalkIndices
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
         pos_sorted = np.take(pos, idx, axis=0)
         h_sorted = np.take(softening, idx)
 
-        # pos_sorted is already in Morton order, so consecutive targets are spatially compact groups
-        g = AccelTarget_grouped(
-            pos_sorted,
-            h_sorted,
-            tree,
-            group_size=group_size,
-            G=G,
-            theta=theta,
-            quadrupole=quadrupole,
-            parallel=parallel,
-        )
+        if device == "cuda":
+            from .cuda import CudaAccel  # lazy: numba-cuda is an optional extra
+
+            g = CudaAccel(tree)(pos_sorted, h_sorted, G=G, theta=theta)
+        else:
+            # pos_sorted is in Morton order, so consecutive targets are spatially compact groups
+            g = AccelTarget_grouped(
+                pos_sorted,
+                h_sorted,
+                tree,
+                group_size=group_size,
+                G=G,
+                theta=theta,
+                quadrupole=quadrupole,
+                parallel=parallel,
+            )
 
         # now g is in the tree-order: reorder it back to the original order
         g = np.take(g, idx.argsort(), axis=0)
@@ -1003,6 +1057,12 @@ def ColumnDensity(
         raise Exception("rays argument type is not supported")
 
     if healpix:
+        # Imported here, not at module scope: healpy is not in install_requires (nothing else in the
+        # package needs it), and `hp` was simply never bound, so this path raised NameError.
+        try:
+            import healpy as hp
+        except ImportError as e:
+            raise ImportError("healpix=... needs healpy: pip install healpy") from e
         nside = healpix
         npix = hp.nside2npix(nside)
         rays = np.array(hp.pix2vec(nside, np.arange(npix))).T
