@@ -16,26 +16,37 @@ initial velocity and geometry for extra fun. We also write a function to
 evaluate the total energy, which is conserved down to tree-force and
 integration errors.
 
+``compute_accel`` is the one place the force solver is configured. Both
+the initial conditions below and every timestep call it, so switching to
+``quadrupole=True``, a different ``theta``, or ``device="cuda"`` is a
+one-line change rather than a hunt through the notebook.
+
 .. code:: ipython3
 
     %pylab
     from pytreegrav import Accel, Potential
-    
-    def GenerateICs(N,seed=42):
-        np.random.seed(seed) # seed the RNG for reproducibility
-        pos = np.random.normal(size=(N,3)) # positions of particles
-        pos -= np.average(pos,axis=0) # put center of mass at the origin
-        vel = np.zeros_like(pos) # initialize at rest
-        vel -= np.average(vel,axis=0) # make average velocity 0
-        softening = np.repeat(0.1,N) # initialize softening to 0.1 
-        masses = np.repeat(1./N,N) # make the system have unit mass
-        return pos, masses, vel, softening
-    
-    def TotalEnergy(pos, masses, vel, softening):
-        kinetic = 0.5 * np.sum(masses[:,None] * vel**2)
-        potential = 0.5 * np.sum(masses * Potential(pos,masses,softening,parallel=True))
-        return kinetic + potential
 
+
+    def compute_accel(pos, masses, softening):
+        """Acceleration on every particle -- the only place the force solver is configured."""
+        return Accel(pos, masses, softening, parallel=True)
+
+
+    def GenerateICs(N, seed=42):
+        np.random.seed(seed)  # seed the RNG for reproducibility
+        pos = np.random.normal(size=(N, 3))  # positions of particles
+        pos -= np.average(pos, axis=0)  # put center of mass at the origin
+        vel = np.zeros_like(pos)  # initialize at rest
+        vel -= np.average(vel, axis=0)  # make average velocity 0
+        softening = np.repeat(0.1, N)  # initialize softening to 0.1
+        masses = np.repeat(1.0 / N, N)  # make the system have unit mass
+        return pos, masses, vel, softening
+
+
+    def TotalEnergy(pos, masses, vel, softening):
+        kinetic = 0.5 * np.sum(masses[:, None] * vel**2)
+        potential = 0.5 * np.sum(masses * Potential(pos, masses, softening, parallel=True))
+        return kinetic + potential
 
 .. parsed-literal::
 
@@ -53,22 +64,24 @@ the Hamiltonian split kick-drift-kick form (e.g. Springel 2005).
 
     def leapfrog_kdk_timestep(dt, pos, masses, softening, vel, accel):
         # first a half-step kick
-        vel[:] = vel + 0.5 * dt * accel # note that you must slice arrays to modify them in place in the function!
+        vel[:] = vel + 0.5 * dt * accel  # note that you must slice arrays to modify them in place in the function!
         # then full-step drift
         pos[:] = pos + dt * vel
         # then recompute accelerations
-        accel[:] = Accel(pos,masses,softening,parallel=True)
+        accel[:] = compute_accel(pos, masses, softening)
         # then another half-step kick
-        vel[:] = vel + 0.5 * dt * accel  
+        vel[:] = vel + 0.5 * dt * accel
 
 Main simulation loop
 --------------------
 
 .. code:: ipython3
 
+    import time
+
     pos, masses, vel, softening = GenerateICs(10000)  # initialize initial condition with 10k particles
 
-    accel = Accel(pos, masses, softening, parallel=True)  # initialize acceleration
+    accel = compute_accel(pos, masses, softening)  # initialize acceleration
 
     t = 0  # initial time
     Tmax = 50  # final/max time
@@ -80,11 +93,12 @@ Main simulation loop
 
     # snapshots for the movie below - store positions every Nth step, aimed at ~120 frames
     n_steps = int(Tmax / dt)
-    # note: %pylab shadows the builtin max() with numpy's, so spell this out explicitly
+    # note: %pylab shadows the builtin min() and max() with numpy's, so the clamps below are spelled out
     snapshot_interval = n_steps // 120 if n_steps > 120 else 1
     snapshots = []  # particle positions at each recorded step
     snap_times = []  # the times those snapshots were taken at
     step = 0
+    t_start = time.time()
 
 
     while t <= Tmax:  # actual simulation loop - this may take a couple minutes to run
@@ -100,13 +114,27 @@ Main simulation loop
         t += dt
         step += 1
 
+        # one-line progress bar, rewritten in place with a carriage return
+        frac = step / n_steps
+        if frac > 1.0:  # the loop runs on t, so the last step can overshoot n_steps slightly
+            frac = 1.0
+        elapsed = time.time() - t_start
+        eta = elapsed * (1.0 - frac) / frac if frac > 0 else 0.0
+        print(
+            "\r[%-30s] %5.1f%%  step %d/%d  t = %5.2f  %.0fs elapsed, ~%.0fs left"
+            % ("=" * int(30 * frac), 100 * frac, step, n_steps, t, elapsed, eta),
+            end="",
+            flush=True,
+        )
+
+    print()  # step off the progress bar line before the summary
     print("Simulation complete! Relative energy error: %g" % (np.abs((energies[0] - energies[-1]) / energies[0])))
     print("Recorded %d snapshots for the movie" % len(snapshots))
 
-
 .. parsed-literal::
 
-    Simulation complete! Relative energy error: 1.51338e-06
+    [==============================] 100.0%  step 1667/1666  t = 50.01  24s elapsed, ~0s left
+    Simulation complete! Relative energy error: 0.000332666
     Recorded 129 snapshots for the movie
 
 
@@ -120,14 +148,11 @@ function of time
 .. code:: ipython3
 
     %matplotlib inline
-    plt.figure(figsize=(4,4),dpi=300)
-    plt.plot(ts,energies,label="Total Energy")
-    plt.plot(ts,r50s,label="Half-mass Radius")
+    plt.figure(figsize=(4, 4), dpi=300)
+    plt.plot(ts, energies, label="Total Energy")
+    plt.plot(ts, r50s, label="Half-mass Radius")
     plt.xlabel("Time")
     plt.legend()
-
-
-
 
 .. parsed-literal::
 
@@ -174,7 +199,6 @@ The simulation loop above kept a copy of the particle positions every ``snapshot
     plt.close(fig)  # suppress the static first frame rendering next to the player
     # anim.save("nbody.mp4", fps=20, dpi=150)  # uncomment for an MP4 instead (needs ffmpeg)
     HTML(anim.to_jshtml(fps=20))
-
 
 (The notebook renders this as an interactive player; shown here as a pre-rendered
 animation.)
