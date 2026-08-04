@@ -287,13 +287,15 @@ class CudaColumnDensity:
 # Gravity.  Same stackless per-target walk, monopole only.
 #
 # float32 is safe here, measured not assumed -- but always say which normalization, because for the
-# acceleration they differ by 1e4 and that has caused confusion here before.  Against the float64 grouped
-# walk on a clustered 22.3M-particle snapshot, median / worst: potential 3.2e-05 / 9.1e-03 per particle
-# and 1.5e-05 / 3.3e-03 against max|field|; accel 2.2e-03 / 1.1e+00 per particle but 1.4e-07 / 1.7e-02
-# against max|field|.  Per-particle is the misleading one for a force: it diverges wherever |a| -> 0 at
-# force balance, which says nothing about the kernel.  The tail is not roundoff either -- it is the
-# acceptance test flipping for a node on the opening-angle boundary, so it is bounded by theta's own
-# ~2e-03 truncation error rather than by epsilon.
+# acceleration the choice moves the answer by 1e4 and that has caused confusion here before.  Normalizing
+# as the docs do, by rms|a| and by std(phi), on a clustered 22.3M-particle snapshot: against the same walk
+# ungrouped, which is what the device actually runs, potential is 1.0e-06 median / 6.2e-06 p99 and accel
+# 4.3e-08 / 1.3e-05 -- three to five orders below theta's own ~2e-03.  Against the grouped CPU default it
+# is 100-2000x that (1.4e-04 and 9.9e-05 median), which is grouping opening a superset of nodes rather
+# than arithmetic.  Dividing by max|a| instead would report 1.4e-07 for that same accel median, since this
+# snapshot has max|a|/rms|a| = 716; per-particle relative error is worse still for a force, diverging
+# wherever |a| -> 0 at force balance.  The tail is the acceptance test flipping for a node on the
+# opening-angle boundary, so it is bounded by theta's truncation error rather than by epsilon.
 #
 # Row layout, 8 float32 = 32 B:
 #   0,1,2  centre of mass    3  mass    4  softening    5  size    6  delta    7  pad

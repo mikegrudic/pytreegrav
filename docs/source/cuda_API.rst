@@ -165,7 +165,10 @@ stateless call spends most of its time reordering and uploading rather than walk
 31.7x with the context reused against 3.8x for a bare ``Potential(..., device="cuda")``.
 
 Accuracy on that snapshot, against two different CPU references, because the choice matters more than
-the precision does:
+the precision does. Errors are :math:`|\Delta|` over the whole snapshot's :math:`2.2 \times 10^7`
+particles, normalised as elsewhere in these docs -- by :math:`\mathrm{rms}|a|` for the acceleration and
+by :math:`\mathrm{std}(\phi)` for the potential, whose zero point is arbitrary -- so they are directly
+comparable to the :math:`\theta` truncation error quoted the same way (~2e-3 RMS at 0.7):
 
 .. list-table::
    :header-rows: 1
@@ -177,30 +180,38 @@ the precision does:
      - max
    * - potential
      - same walk, ungrouped
-     - 1.3e-7
-     - 8.3e-7
-     - 7.5e-6
+     - 1.0e-6
+     - 6.2e-6
+     - 1.2e-2
    * - acceleration
      - same walk, ungrouped
-     - 2.0e-9
-     - 8.6e-7
-     - 1.9e-4
+     - 4.3e-8
+     - 1.3e-5
+     - 1.2e1
    * - potential
      - grouped CPU default
-     - 1.8e-5
-     - 7.5e-4
-     - 2.7e-3
+     - 1.4e-4
+     - 5.7e-3
+     - 3.1e-2
    * - acceleration
      - grouped CPU default
-     - 4.9e-6
-     - 2.6e-4
-     - 5.4e-3
+     - 9.9e-5
+     - 3.6e-3
+     - 1.2e1
 
 The first two rows are float32 and nothing else: they compare against the *ungrouped* walk, which is the
-algorithm the device actually runs. The last two are what you see if you diff ``device="cuda"`` against
-the default CPU path, and they are two orders of magnitude larger -- because the CPU groups targets and so
-opens a superset of nodes, a difference in the approximation rather than in the arithmetic. All four rows
-are unchanged if the device kernels are compiled in float64, which is what establishes that.
+algorithm the device actually runs, and sit three to five orders of magnitude below the opening angle's
+own error. The last two are what you see if you diff ``device="cuda"`` against the default CPU path, and
+they are 100x to 2000x larger -- because the CPU groups targets and so opens a superset of nodes, a
+difference in the approximation rather than in the arithmetic. Compiling the device kernels in float64
+barely moves either pair, which is what establishes that.
+
+Mind the normalisation, especially for the acceleration, where the choice moves the answer by four
+orders of magnitude: this snapshot has :math:`\max|a| / \mathrm{rms}|a| = 716`, so dividing by
+:math:`\max|a|` instead gives a median of 1.4e-7 rather than 9.9e-5. The max column is likewise one
+particle, not a typical one -- an absolute error of :math:`12\,\mathrm{rms}|a|` is only 1.7% of
+:math:`\max|a|`. Per-particle relative error is the one to avoid for a force, since it diverges wherever
+:math:`|a| \to 0` at force balance and reports 1.1 at worst while saying nothing about the kernel.
 
 The residual tail in the first two rows is the acceptance test flipping for a node sitting on the
 opening-angle boundary, which changes the answer by that node's own truncation error -- so it is bounded

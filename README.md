@@ -323,10 +323,17 @@ phi = ctx(pos, softening, G=1.0, theta=0.7)   # theta is per-call, so one upload
 ```
 
 Measured float32 error against the *same, ungrouped* walk in float64 — the algorithm the device actually
-runs: potential 1.3e-7 median / 7.5e-6 worst, acceleration 2.0e-9 / 1.9e-4. Diffing against the *default*
-CPU path instead gives 1.8e-5 / 2.7e-3 and 4.9e-6 / 5.4e-3, two orders of magnitude larger — but that is
-the CPU's target grouping opening a superset of nodes, not precision: both sets of numbers are unchanged
-if the device kernels are compiled in float64.
+runs — over all 2.2e7 particles of that snapshot, normalised as elsewhere here by `rms|a|` and by
+`std(phi)`: potential 1.0e-6 median / 6.2e-6 p99, acceleration 4.3e-8 / 1.3e-5, three to five orders below
+the opening angle's own ~2e-3. Diffing against the *default* CPU path instead gives 1.4e-4 and 9.9e-5
+medians, 100–2000x larger — but that is the CPU's target grouping opening a superset of nodes, not
+precision: compiling the device kernels in float64 barely moves either pair.
+
+Quote the normalisation with the number, particularly for the acceleration. This snapshot has
+`max|a| / rms|a| = 716`, so dividing by `max|a|` reports that same 9.9e-5 median as 1.4e-7, and
+per-particle relative error reports it as 2.2e-3 — it diverges wherever `|a| → 0` at force balance, which
+says nothing about the kernel. See [the CUDA docs](https://pytreegrav.readthedocs.io/en/latest/cuda_API.html)
+for the full table.
 
 ## Brute force
 
