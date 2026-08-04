@@ -174,7 +174,11 @@ def _make_column_walk(cuda_target):
             s3 = nodes[no, 3]
             if no < npart:  # leaf: h^2 in slot 3
                 if pp2 < s3:
-                    chord = sqrt(ONE - pp2 * nodes[no, 6])
+                    # Clamped because pp2 < h^2 does not imply pp2 * (1/h^2) <= 1: slots 3 and 6 round
+                    # to float32 independently, and fastmath's FMA keeps their product exact rather
+                    # than rounding it back to 1, so the radicand can go an ulp negative.  4 NaNs in
+                    # 18M walks before this; a grazing ray has zero chord anyway.
+                    chord = sqrt(max(ZERO, ONE - pp2 * nodes[no, 6]))
                     if r2 > s3:  # target outside the sphere: the whole chord, if it lies ahead
                         if z > ZERO:
                             col += nodes[no, 5] * TWO * chord
