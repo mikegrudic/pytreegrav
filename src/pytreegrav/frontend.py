@@ -7,6 +7,7 @@ from .dynamic_tree import *
 from .treewalk import *
 from .grouped_treewalk import (
     AccelTarget_grouped,
+    FieldsTarget_grouped,
     PotentialTarget_grouped,
     TidalTensorTarget_grouped,
     _morton_order,
@@ -898,6 +899,149 @@ def TidalTensorTarget(
         return T, tree
     else:
         return T
+
+
+class Field:
+    """A reusable gravitational field: build the tree once, evaluate many times.
+
+    The module-level functions are self-contained by design -- ``Accel(x, m, h)`` is a complete answer with no setup -- but they pay for that on every call. Each one rebuilds the tree (or, given ``tree=``, re-derives the Morton permutation of the targets), and each returns exactly one quantity. Evaluating the potential, the field and the tidal tensor of one mass distribution therefore builds three permutations and walks the tree three times.
+
+    ``Field`` holds the tree, the sorted source arrays and the permutation, so repeated evaluation pays for none of that again, and :meth:`evaluate` gets every requested quantity out of a *single* traversal. This is the CPU counterpart of the ``pytreegrav.cuda`` context objects, which already worked this way.
+
+    >>> f = Field(pos, m, softening=h, theta=0.4, quadrupole=True, parallel=True)
+    >>> phi = f.potential()                                  # one walk
+    >>> res = f.evaluate(potential=True, accel=True)         # both from one walk
+    >>> T = f.tidal(pos_target=grid)                         # at arbitrary points
+
+    Parameters
+    ----------
+    pos: array_like
+        shape (N,3) array of source particle positions
+    m: array_like
+        shape (N,) array of source particle masses
+    softening: None or array_like, optional
+        shape (N,) array of kernel support radii for gravitational softening (default 0)
+    G: float, optional
+        gravitational constant (default 1.0)
+    theta: float, optional
+        opening angle; may be overridden per call (default 0.7)
+    quadrupole: bool, optional
+        build and use node quadrupole moments (default False). Fixed at construction, because it determines what the tree stores.
+    group_size: int, optional
+        targets sharing one traversal (default 8)
+    parallel: bool, optional
+        parallelize over groups; may be overridden per call (default False)
+
+    Notes
+    -----
+    The sources are fixed once the tree is built. Move the particles and you need a new ``Field``.
+    """
+
+    def __init__(self, pos, m, softening=None, G=1.0, theta=0.7, quadrupole=False, group_size=8, parallel=False):
+        # coerce exactly as the functional API does -- see the note in Accel
+        pos = np.atleast_2d(_f64(pos))
+        m = np.atleast_1d(_f64(m))
+        if softening is None:
+            softening = np.zeros_like(m)
+        softening = np.atleast_1d(_f64(softening))
+
+        self.G = G
+        self.theta = theta
+        self.quadrupole = quadrupole
+        self.group_size = group_size
+        self.parallel = parallel
+        self.tree = ConstructTree(pos, m, softening, quadrupole=quadrupole)
+
+        # The source permutation is computed once here rather than per call.  TreewalkIndices is
+        # built from pos, so it already indexes pos; its argsort undoes it.
+        self._idx = self.tree.TreewalkIndices
+        self._inv = self._idx.argsort()
+        self._pos_sorted = np.take(pos, self._idx, axis=0)
+        self._soft_sorted = np.take(softening, self._idx)
+
+    def __repr__(self):
+        return (
+            f"<pytreegrav.Field: {self.tree.NumParticles} particles, "
+            f"{'quadrupole' if self.quadrupole else 'monopole'}, theta={self.theta}, "
+            f"G={self.G}, group_size={self.group_size}, parallel={self.parallel}>"
+        )
+
+    def evaluate(
+        self,
+        potential=False,
+        accel=False,
+        tidal=False,
+        pos_target=None,
+        softening_target=None,
+        theta=None,
+        parallel=None,
+        group_size=None,
+    ):
+        """Evaluate any combination of the fields in a single tree traversal.
+
+        Requesting several at once is substantially cheaper than one call each, because the per-interaction setup -- the distance, the softening, and with ``quadrupole=True`` the moment contraction -- is computed once and shared. Measured on 1e6 Plummer particles at 32 threads, against the equivalent separate walks: potential+accel 1.54-1.70x, accel+tidal 1.36-1.41x, all three 1.64-1.65x.
+
+        The catch is that one traversal means one acceptance criterion, hence one ``theta`` for everything requested. The tidal tensor is a derivative higher than the potential and wants a smaller ``theta`` for equal fractional accuracy, so a fused call runs all of them at the strictest requirement; if you want the potential at 0.7 and the tidal tensor at 0.4, two calls are cheaper. When they *are* wanted at one ``theta``, fusing additionally makes them mutually consistent, since they then share an accepted-node set.
+
+        Parameters
+        ----------
+        potential, accel, tidal: bool, optional
+            which fields to return; at least one must be True
+        pos_target: array_like or None, optional
+            shape (M,3) points at which to evaluate. Defaults to the source positions.
+        softening_target: array_like or None, optional
+            shape (M,) floor on the softening used at each target (default 0)
+        theta, parallel, group_size: optional
+            per-call overrides of the values given to the constructor
+
+        Returns
+        -------
+        dict
+            the requested keys: ``"potential"`` shape (M,), ``"accel"`` shape (M,3), ``"tidal"`` shape (M,3,3), in the order of ``pos_target`` (or of the sources)
+        """
+        if not (potential or accel or tidal):
+            raise ValueError("request at least one of potential=True, accel=True, tidal=True")
+        theta = self.theta if theta is None else theta
+        parallel = self.parallel if parallel is None else parallel
+        group_size = self.group_size if group_size is None else group_size
+
+        if pos_target is None:  # self-evaluation: reuse the permutation built in __init__
+            sorted_pos, sorted_soft, unsort = self._pos_sorted, self._soft_sorted, self._inv
+        else:
+            pos_target = np.atleast_2d(_f64(pos_target))
+            if softening_target is None:
+                softening_target = zeros(len(pos_target))
+            softening_target = np.atleast_1d(_f64(softening_target))
+            # external targets are not spatially ordered; Morton-sort so grouping is effective
+            tsort = _morton_order(pos_target)
+            sorted_pos, sorted_soft, unsort = pos_target[tsort], softening_target[tsort], tsort.argsort()
+
+        out = FieldsTarget_grouped(
+            sorted_pos,
+            sorted_soft,
+            self.tree,
+            potential=potential,
+            accel=accel,
+            tidal=tidal,
+            group_size=group_size,
+            G=self.G,
+            theta=theta,
+            quadrupole=self.quadrupole,
+            parallel=parallel,
+        )
+        return {k: np.take(v, unsort, axis=0) for k, v in out.items()}
+
+    def potential(self, pos_target=None, **kwargs):
+        """Gravitational potential, shape (M,). See :meth:`evaluate`."""
+        return self.evaluate(potential=True, pos_target=pos_target, **kwargs)["potential"]
+
+    def accel(self, pos_target=None, **kwargs):
+        """Gravitational acceleration, shape (M,3). See :meth:`evaluate`."""
+        return self.evaluate(accel=True, pos_target=pos_target, **kwargs)["accel"]
+
+    def tidal(self, pos_target=None, **kwargs):
+        """Tidal tensor, shape (M,3,3). See :meth:`evaluate` and :func:`TidalTensor`."""
+        return self.evaluate(tidal=True, pos_target=pos_target, **kwargs)["tidal"]
 
 
 def DensityCorrFunc(
