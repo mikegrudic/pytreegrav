@@ -14,9 +14,9 @@ from pytreegrav.frontend import ConstructTree, Potential, PotentialTarget, Accel
 
 def _data(n=500, seed=7):
     rng = np.random.default_rng(seed)
-    x = np.float64(rng.normal(size=(n, 3)))
-    m = np.float64(rng.random(n) / n)
-    h = np.float64(np.repeat(0.05, n))
+    x = np.asarray(rng.normal(size=(n, 3)), np.float64)
+    m = np.asarray(rng.random(n) / n, np.float64)
+    h = np.asarray(np.repeat(0.05, n), np.float64)
     return x, m, h
 
 

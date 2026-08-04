@@ -221,22 +221,22 @@ NH_eff = Σ_eff X_H / m_p  # column density in H nuclei code length^-2
 
 ## GPU-accelerated ray-tracing (optional)
 
-The ray-traced path has an optional CUDA backend. On an RTX A6000 against 32 Xeon Gold 6244 threads
-it is **7.9x** faster on a real STARFORGE snapshot (24.7M gas particles, 6 rays, 148M walks), and
-11.8–18.2x on smooth synthetic clouds at N = 1e5–3e6. Clustered data is the harder case: a warp can
-hold both dense-core and diffuse-gas sightlines, so lanes wait on each other, and the tree no longer
-fits in cache. Take ~8x as the figure to expect on production data.
+The ray-traced path has an optional CUDA backend. On an RTX A6000 against 32 Xeon Gold 6244 threads it
+is **12.3x** faster on a real astrophysical snapshot (22.3M gas particles, 6 rays, 134M walks: 52 s against
+638 s). Clustered data is the harder case: a warp can hold both dense-core and diffuse-gas sightlines, so
+lanes wait on each other, and the tree no longer fits in cache — smooth synthetic clouds do better, so
+take this as the figure to expect on production data.
 
 It is single precision, and on real data the error grows with the number of contributions summed
-along a sightline, so it is a distribution rather than one number. Measured over 12M sightlines of
-that snapshot, against the float64 CPU result:
+along a sightline, so it is a distribution rather than one number. Measured over 1.2M sightlines of
+that snapshot, against the same walk in float64:
 
 | median | p99 | p99.9 | p99.99 | max |
 | --- | --- | --- | --- | --- |
-| 2.0e-6 | 4.4e-5 | 1.7e-4 | 9.1e-4 | 2.5e-2 |
+| 1.5e-6 | 3.7e-5 | 9.7e-5 | 2.2e-4 | 2.3e-2 |
 
-The worst cases are the *densest* sightlines — 0.009% of entries exceed 1e-3, and their median column
-is 240x the overall median. Those are the ones where τ ≫ 1 and the answer is "opaque" regardless, so
+The worst cases are the *densest* sightlines — 0.0003% of entries exceed 1e-3, and their median column
+is ~2000x the overall median. Those are the ones where τ ≫ 1 and the answer is "opaque" regardless, so
 this is comfortably below the error of the uniform-sphere density model itself. But the CPU path
 agrees with direct summation to ~1e-15, so the two are not interchangeable if you need reproducible
 digits.
@@ -259,8 +259,43 @@ ctx = CudaColumnDensity(tree)                 # pack + upload once
 columns = ctx(pos, rays)                      # per-call transfers are ~2% of runtime
 ```
 
-`pytreegrav.cuda` is never imported by the package itself, so a CPU-only install is unaffected.
-Applies to the ray-traced path only (`rays` given, `randomize_rays` off), not the 6-bin estimator.
+Monopole gravity has the same flag:
+
+```python
+phi = Potential(x, m, h, theta=0.7, device="cuda")   # or Accel(...)
+```
+
+Gravity walks are short — under 0.1 µs/particle on the device — so the one-off tree upload dominates a
+single call. On that snapshot, reusing a `CudaPotential`/`CudaAccel` context gives **20.9x** and
+**21.4x** (0.91 s and 0.99 s against 19 s and 21 s on 32 threads); the single-shot flag above, which
+packs and uploads the tree every call (0.43 s at this N), gives **14.2x** and **14.9x**.
+
+Measured float32 error against the *same, ungrouped* walk in float64 — the algorithm the device actually
+runs: potential 1.3e-7 median / 7.5e-6 worst, acceleration 2.0e-9 / 1.9e-4. Diffing against the *default*
+CPU path instead gives 1.8e-5 / 2.7e-3 and 4.9e-6 / 5.4e-3, two orders of magnitude larger — but that is
+the CPU's target grouping opening a superset of nodes, not precision: both sets of numbers are unchanged
+if the device kernels are compiled in float64.
+
+Brute force takes the flag too, and it is where the GPU is at its best — no traversal, no divergence,
+pure arithmetic:
+
+```python
+phi = Potential(x, m, h, method="bruteforce", device="cuda")
+```
+
+**387 Gpair/s** on an A6000 against roughly 10 on 32 CPU threads, about **40x**. Because brute force is
+exact, the useful consequence is where the crossover moves: on the GPU it stays cheaper than the *tree*
+out to N ≈ 1e5, against N ≈ 7e3 on 32 CPU threads — a much wider range in which you can skip the
+approximation entirely. Its error is float32 accumulation and nothing else (no `theta`, so no tail),
+growing as √N: 2.4e-6 at N = 1e3, 5.1e-5 at N = 6e4.
+
+Below N ≈ 5e3 the GPU is *slower* than 32 CPU threads for either method — a launch plus an upload is not
+worth amortizing over that little work. See `examples/benchmark_scaling.py --cuda` and
+[examples/benchmark_scaling_cuda.png](examples/benchmark_scaling_cuda.png).
+
+`pytreegrav.cuda` is never imported by the package itself, so a CPU-only install is unaffected. For
+column density it applies to the ray-traced path only (`rays` given, `randomize_rays` off), not the
+6-bin estimator; for gravity, to the monopole tree and to brute force.
 
 # Community
 

@@ -11,13 +11,18 @@ from .bruteforce_symmetric import Potential_bruteforce_symmetric, Accel_brutefor
 from .misc import *
 
 
+def _f64(a):
+    """Cast to float64 without collapsing a length-1 array to a scalar.
+
+    ``np.float64(a)`` looks like a dtype cast, but on any array of size 1 numpy applies its *scalar constructor* instead and returns a 0-d float64 (deprecated since numpy 1.25, fixed only in 2.4). A caller passing a single particle therefore had ``m`` and ``softening`` silently turned into scalars, and the jitclass then failed to type ``masses[oi]`` (github issue #31). ``asarray`` never does this.
+    """
+    return np.asarray(a, dtype=np.float64)
+
+
 def checkTreeQuadrupoles(tree, quadrupole):
     """Raise ValueError if a quadrupole treewalk is requested on a tree that lacks them.
 
-    The walk kernels index tree.Quadrupoles based only on the walk's quadrupole flag, but
-    that array is allocated only when the tree itself was built with quadrupole=True. The
-    mismatch is an out-of-bounds read, which numba does not bounds-check, so without this
-    guard it segfaults instead of raising.
+    The walk kernels index tree.Quadrupoles based only on the walk's quadrupole flag, but that array is allocated only when the tree itself was built with quadrupole=True. The mismatch is an out-of-bounds read, which numba does not bounds-check, so without this guard it segfaults instead of raising.
     """
     if quadrupole and not tree.HasQuads:
         raise ValueError(
@@ -42,12 +47,7 @@ def valueTestMethod(method):
 def warn_if_coincident_positions(tree, softening=None):
     """Warn if the build found particle positions coincident to floating-point precision.
 
-    Asks the tree rather than scanning the input: the build cannot subdivide coincident points
-    forever, so it already detects them exactly, and reading its flag is free.
-
-    The scan this replaces cost 1083 ms of a 1985 ms build at N=1e7 (np.unique per dimension) and was
-    wrong besides -- it tested whether any single *coordinate* repeated rather than any *position*, so
-    any lattice or grid was warned about while every position was in fact distinct.
+    Asks the tree rather than scanning the input: the build cannot subdivide coincident points forever, so it already detects them exactly, and reading its flag is free. The np.unique-per-dimension scan this replaces cost over half the build time at N=1e7 and was wrong besides, testing whether any single *coordinate* repeated rather than any *position* -- so it warned about any lattice or grid whose positions were in fact all distinct.
     """
     if not tree.HasCoincidentPoints:
         return
@@ -87,20 +87,13 @@ def ConstructTree(
     quadrupole: bool, optional
         Whether to store quadrupole moments (default False)
     vel: array_like or None, optional
-        shape (N,3) array of particle velocities. If provided, a DynamicOctree that also stores
-        node-averaged velocities is built (used by the velocity correlation/structure functions);
-        if None, a static Octree is built (default None)
+        shape (N,3) array of particle velocities. If provided, a DynamicOctree that also stores node-averaged velocities is built (used by the velocity correlation/structure functions); if None, a static Octree is built (default None)
     compute_moments: bool, optional
-        Whether to compute node multipole moments (centers of mass, masses, softenings, and
-        quadrupoles if enabled). Set False to build only the spatial structure, e.g. for purely
-        geometric queries (default True; forced False when m is None)
+        Whether to compute node multipole moments (centers of mass, masses, softenings, and quadrupoles if enabled). Set False to build only the spatial structure, e.g. for purely geometric queries (default True; forced False when m is None)
     morton_order: bool, optional
-        Whether to store particles in Morton (depth-first traversal) order for cache-efficient
-        treewalks (default True)
+        Whether to store particles in Morton (depth-first traversal) order for cache-efficient treewalks (default True)
     radix: bool, optional
-        Whether to use the radix-sort tree build (faster, default True). Set False to use the
-        legacy insertion build. Ignored when vel is provided (dynamic tree always uses insertion),
-        or when morton_order is False.
+        Whether to use the radix-sort tree build (faster, default True). Set False to use the legacy insertion build. Ignored when vel is provided (dynamic tree always uses insertion), or when morton_order is False.
 
     Returns
     -------
@@ -108,11 +101,19 @@ def ConstructTree(
         tree instance built from the particle data
     """
 
+    # Coerce here rather than trusting the caller: the jitclass reports a shape/dtype mismatch as a
+    # numba TypingError deep in the build, which is unreadable. atleast_1d/2d in particular rescue a
+    # single particle, whose arrays a caller can easily have had collapsed to scalars -- see _f64.
+    pos = np.atleast_2d(_f64(pos))
     if m is None:
         m = zeros(len(pos))
         compute_moments = False
+    m = np.atleast_1d(_f64(m))
     if softening is None:
         softening = zeros_like(m)
+    softening = np.atleast_1d(_f64(softening))
+    if vel is not None:
+        vel = np.atleast_2d(_f64(vel))
     if not (np.all(np.isfinite(pos)) and np.all(np.isfinite(m)) and np.all(np.isfinite(softening))):
         print("Invalid input detected - aborting treebuild to avoid going into an infinite loop!")
         raise
@@ -147,6 +148,7 @@ def Potential(
     method="adaptive",
     quadrupole=False,
     group_size=8,
+    device="cpu",
 ):
     """Gravitational potential calculation
 
@@ -161,7 +163,7 @@ def Potential(
     G: float, optional
         gravitational constant (default 1.0)
     softening: None or array_like, optional
-        shape (N,) array containing kernel support radii for gravitational softening -  - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default
+        shape (N,) array containing kernel support radii for gravitational softening - these give the radius of compact support of the M4 cubic spline mass distribution - set to 0 by default
     theta: float, optional
         cell opening angle used to control force accuracy; smaller is slower (runtime ~ theta^-3) but more accurate. (default 0.7, giving ~0.2% RMS acceleration error on a Plummer sphere; 0.5 gives ~0.1%)
     parallel: bool, optional
@@ -175,11 +177,10 @@ def Potential(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Number of targets per group in the grouped treewalk: the tree is traversed once per
-        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
-        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
-        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
-        grow and open more nodes. Only affects the tree method.
+        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
+
+    device: str, optional
+        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call; for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
 
     Returns
     -------
@@ -190,22 +191,39 @@ def Potential(
     ## test if method is correct, otherwise raise a ValueError
     valueTestMethod(method)
 
+    # Coerce once, up front, so every method sees the same thing. Only the tree path used to coerce
+    # (via ConstructTree), so lists worked with method="tree" and raised a numba TypingError with
+    # method="bruteforce"; asarray is a no-op for arrays that are already float64.
+    pos = np.atleast_2d(_f64(pos))
+    m = np.atleast_1d(_f64(m))
     if softening is None:
         softening = np.zeros_like(m)
+    softening = np.atleast_1d(_f64(softening))
 
     # figure out which method to use
     if method == "adaptive":
-        # Threaded brute force stays competitive to larger N. 4000 is where the parallel curves cross
+        # A supplied tree pins the method: brute force cannot use it and would silently sum only the
+        # particles in pos, a different quantity whenever the tree holds a different set. Otherwise,
+        # threaded brute force stays competitive to larger N -- 4000 is where the parallel curves cross
         # on 32 threads (Plummer, theta=0.7): at N=3447 brute-force accel is 0.57 us/particle against
         # the tree's 0.67, by N=6092 it is 0.95 against 0.68. Potential crosses nearer 5500, so this
-        # favours acceleration -- the more common call, and the steeper curve to be wrong about.
-        if len(pos) > (4000 if parallel else 1000):
+        # favours acceleration, the more common call and the steeper curve to be wrong about.
+        if tree is not None or len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"
 
+    if device not in ("cpu", "cuda"):
+        raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+    if device == "cuda" and quadrupole:
+        raise ValueError("device='cuda' is monopole only; pass quadrupole=False")
+
     if method == "bruteforce":  # we're using brute force
-        if parallel:
+        if device == "cuda":
+            from .cuda import CudaPotentialBruteforce  # lazy: numba-cuda is an optional extra
+
+            phi = CudaPotentialBruteforce(pos, m, softening)(pos, softening, G=G)
+        elif parallel:
             # the symmetrized kernel runs two parallel regions and per-thread buffers;
             # that only pays for itself once there are enough interactions to amortize it
             if len(pos) >= SYMMETRIC_NMIN:
@@ -219,29 +237,41 @@ def Potential(
     else:  # we're using the tree algorithm
         if tree is None:
             tree = ConstructTree(
-                np.float64(pos),
-                np.float64(m),
-                np.float64(softening),
+                _f64(pos),
+                _f64(m),
+                _f64(softening),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+            idx = tree.TreewalkIndices  # built from pos, so its walk order already indexes pos
+        else:
+            # SORT pos; don't apply the tree's stored permutation. TreewalkIndices is a fixed sigma
+            # over whatever built the tree, and is not an involution -- pos already in tree order
+            # becomes X[sigma^2]: right answer, but the groups are no longer spatially compact, so
+            # grouping's acceptance padding inflated ~94x on clustered data: 15 s -> 285 s.
+            # A larger supplied tree raises IndexError outright. Sorting is idempotent, fixing both.
+            idx = _morton_order(_f64(pos))
         checkTreeQuadrupoles(tree, quadrupole)
-        idx = tree.TreewalkIndices
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
         pos_sorted = np.take(pos, idx, axis=0)
         h_sorted = np.take(softening, idx)
 
-        # pos_sorted is already in Morton order, so consecutive targets are spatially compact groups
-        phi = PotentialTarget_grouped(
-            pos_sorted,
-            h_sorted,
-            tree,
-            group_size=group_size,
-            G=G,
-            theta=theta,
-            quadrupole=quadrupole,
-            parallel=parallel,
-        )
+        if device == "cuda":
+            from .cuda import CudaPotential  # lazy: numba-cuda is an optional extra
+
+            phi = CudaPotential(tree)(pos_sorted, h_sorted, G=G, theta=theta)
+        else:
+            # pos_sorted is in Morton order, so consecutive targets are spatially compact groups
+            phi = PotentialTarget_grouped(
+                pos_sorted,
+                h_sorted,
+                tree,
+                group_size=group_size,
+                G=G,
+                theta=theta,
+                quadrupole=quadrupole,
+                parallel=parallel,
+            )
 
         # now reorder phi back to the order of the input positions
         phi = np.take(phi, idx.argsort())
@@ -298,11 +328,7 @@ def PotentialTarget(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Number of targets per group in the grouped treewalk: the tree is traversed once per
-        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
-        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
-        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
-        grow and open more nodes. Only affects the tree method.
+        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
 
     Returns
     -------
@@ -354,17 +380,17 @@ def PotentialTarget(
     else:  # we're using the tree algorithm
         if tree is None:
             tree = ConstructTree(
-                np.float64(pos_source),
-                np.float64(m_source),
-                np.float64(softening_source),
+                _f64(pos_source),
+                _f64(m_source),
+                _f64(softening_source),
                 quadrupole=quadrupole,
             )  # build the tree if needed
         checkTreeQuadrupoles(tree, quadrupole)
         # external targets are not spatially ordered; Morton-sort them so grouping is effective
-        tsort = _morton_order(np.float64(pos_target))
+        tsort = _morton_order(_f64(pos_target))
         phi_sorted = PotentialTarget_grouped(
-            np.float64(pos_target)[tsort],
-            np.float64(softening_target)[tsort],
+            _f64(pos_target)[tsort],
+            _f64(softening_target)[tsort],
             tree,
             group_size=group_size,
             G=G,
@@ -393,6 +419,7 @@ def Accel(
     method="adaptive",
     quadrupole=False,
     group_size=8,
+    device="cpu",
 ):
     """Gravitational acceleration calculation
 
@@ -421,11 +448,10 @@ def Accel(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Number of targets per group in the grouped treewalk: the tree is traversed once per
-        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
-        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
-        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
-        grow and open more nodes. Only affects the tree method.
+        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
+
+    device: str, optional
+        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call; for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
 
     Returns
     -------
@@ -436,19 +462,34 @@ def Accel(
     ## test if method is correct, otherwise raise a ValueError
     valueTestMethod(method)
 
+    # Coerce once, up front, so every method sees the same thing. Only the tree path used to coerce
+    # (via ConstructTree), so lists worked with method="tree" and raised a numba TypingError with
+    # method="bruteforce"; asarray is a no-op for arrays that are already float64.
+    pos = np.atleast_2d(_f64(pos))
+    m = np.atleast_1d(_f64(m))
     if softening is None:
         softening = np.zeros_like(m)
+    softening = np.atleast_1d(_f64(softening))
 
     # figure out which method to use
     if method == "adaptive":
-        # see the threshold note in Potential
-        if len(pos) > (4000 if parallel else 1000):
+        # see the method-selection note in Potential
+        if tree is not None or len(pos) > (4000 if parallel else 1000):
             method = "tree"
         else:
             method = "bruteforce"
 
+    if device not in ("cpu", "cuda"):
+        raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+    if device == "cuda" and quadrupole:
+        raise ValueError("device='cuda' is monopole only; pass quadrupole=False")
+
     if method == "bruteforce":  # we're using brute force
-        if parallel:
+        if device == "cuda":
+            from .cuda import CudaAccelBruteforce  # lazy: numba-cuda is an optional extra
+
+            g = CudaAccelBruteforce(pos, m, softening)(pos, softening, G=G)
+        elif parallel:
             # see the note in Potential: small problems stay on the simpler kernel
             if len(pos) >= SYMMETRIC_NMIN:
                 g = Accel_bruteforce_symmetric(pos, m, softening, G=G)
@@ -461,29 +502,41 @@ def Accel(
     else:  # we're using the tree algorithm
         if tree is None:
             tree = ConstructTree(
-                np.float64(pos),
-                np.float64(m),
-                np.float64(softening),
+                _f64(pos),
+                _f64(m),
+                _f64(softening),
                 quadrupole=quadrupole,
             )  # build the tree if needed
+            idx = tree.TreewalkIndices  # built from pos, so its walk order already indexes pos
+        else:
+            # SORT pos; don't apply the tree's stored permutation. TreewalkIndices is a fixed sigma
+            # over whatever built the tree, and is not an involution -- pos already in tree order
+            # becomes X[sigma^2]: right answer, but the groups are no longer spatially compact, so
+            # grouping's acceptance padding inflated ~94x on clustered data: 15 s -> 285 s.
+            # A larger supplied tree raises IndexError outright. Sorting is idempotent, fixing both.
+            idx = _morton_order(_f64(pos))
         checkTreeQuadrupoles(tree, quadrupole)
-        idx = tree.TreewalkIndices
 
         # sort by the order they appear in the treewalk to improve access pattern efficiency
         pos_sorted = np.take(pos, idx, axis=0)
         h_sorted = np.take(softening, idx)
 
-        # pos_sorted is already in Morton order, so consecutive targets are spatially compact groups
-        g = AccelTarget_grouped(
-            pos_sorted,
-            h_sorted,
-            tree,
-            group_size=group_size,
-            G=G,
-            theta=theta,
-            quadrupole=quadrupole,
-            parallel=parallel,
-        )
+        if device == "cuda":
+            from .cuda import CudaAccel  # lazy: numba-cuda is an optional extra
+
+            g = CudaAccel(tree)(pos_sorted, h_sorted, G=G, theta=theta)
+        else:
+            # pos_sorted is in Morton order, so consecutive targets are spatially compact groups
+            g = AccelTarget_grouped(
+                pos_sorted,
+                h_sorted,
+                tree,
+                group_size=group_size,
+                G=G,
+                theta=theta,
+                quadrupole=quadrupole,
+                parallel=parallel,
+            )
 
         # now g is in the tree-order: reorder it back to the original order
         g = np.take(g, idx.argsort(), axis=0)
@@ -540,11 +593,7 @@ def AccelTarget(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Number of targets per group in the grouped treewalk: the tree is traversed once per
-        spatially-compact group of this many targets, amortizing the (dominant) traversal cost.
-        Default 8 is ~2-3x faster than group_size=1 (which reproduces the per-particle walk) at
-        equal-or-better accuracy. Larger values eventually slow down as the group bounding boxes
-        grow and open more nodes. Only affects the tree method.
+        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
 
     Returns
     -------
@@ -596,17 +645,17 @@ def AccelTarget(
     else:  # we're using the tree algorithm
         if tree is None:
             tree = ConstructTree(
-                np.float64(pos_source),
-                np.float64(m_source),
-                np.float64(softening_source),
+                _f64(pos_source),
+                _f64(m_source),
+                _f64(softening_source),
                 quadrupole=quadrupole,
             )  # build the tree if needed
         checkTreeQuadrupoles(tree, quadrupole)
         # external targets are not spatially ordered; Morton-sort them so grouping is effective
-        tsort = _morton_order(np.float64(pos_target))
+        tsort = _morton_order(_f64(pos_target))
         g_sorted = AccelTarget_grouped(
-            np.float64(pos_target)[tsort],
-            np.float64(softening_target)[tsort],
+            _f64(pos_target)[tsort],
+            _f64(softening_target)[tsort],
             tree,
             group_size=group_size,
             G=G,
@@ -672,12 +721,14 @@ def DensityCorrFunc(
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
         rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
+    built_tree = tree is None
     if tree is None:
         softening = np.zeros_like(m)
-        tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening))  # build the tree if needed
-    idx = tree.TreewalkIndices
-
-    # sort by the order they appear in the treewalk to improve access pattern efficiency
+        tree = ConstructTree(_f64(pos), _f64(m), _f64(softening))  # build the tree if needed
+    # Sort pos rather than applying the tree's stored permutation -- see the note in Potential. The
+    # output is a binned aggregate, so sigma^2 was still a valid sample; the real failure was that a
+    # supplied tree of a different size indexed out of bounds.
+    idx = tree.TreewalkIndices if built_tree else _morton_order(_f64(pos))
     pos_sorted = np.take(pos, idx, axis=0)
 
     if parallel:
@@ -759,12 +810,14 @@ def VelocityCorrFunc(
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
         rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
+    built_tree = tree is None
     if tree is None:
         softening = np.zeros_like(m)
-        tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening), vel=v)  # build the tree if needed
-    idx = tree.TreewalkIndices
-
-    # sort by the order they appear in the treewalk to improve access pattern efficiency
+        tree = ConstructTree(_f64(pos), _f64(m), _f64(softening), vel=v)  # build the tree if needed
+    # Sort pos rather than applying the tree's stored permutation -- see the note in Potential. The
+    # output is a binned aggregate, so sigma^2 was still a valid sample; the real failure was that a
+    # supplied tree of a different size indexed out of bounds.
+    idx = tree.TreewalkIndices if built_tree else _morton_order(_f64(pos))
     pos_sorted = np.take(pos, idx, axis=0)
     v_sorted = np.take(v, idx, axis=0)
     wt_sorted = np.take(m, idx, axis=0)
@@ -851,12 +904,14 @@ def VelocityStructFunc(
         r = np.sort(np.sqrt(np.sum((pos - np.median(pos, axis=0)) ** 2, axis=1)))
         rbins = 10 ** np.linspace(np.log10(r[10]), np.log10(r[-1]), int(len(r) ** (1.0 / 3)))
 
+    built_tree = tree is None
     if tree is None:
         softening = np.zeros_like(m)
-        tree = ConstructTree(np.float64(pos), np.float64(m), np.float64(softening), vel=v)  # build the tree if needed
-    idx = tree.TreewalkIndices
-
-    # sort by the order they appear in the treewalk to improve access pattern efficiency
+        tree = ConstructTree(_f64(pos), _f64(m), _f64(softening), vel=v)  # build the tree if needed
+    # Sort pos rather than applying the tree's stored permutation -- see the note in Potential. The
+    # output is a binned aggregate, so sigma^2 was still a valid sample; the real failure was that a
+    # supplied tree of a different size indexed out of bounds.
+    idx = tree.TreewalkIndices if built_tree else _morton_order(_f64(pos))
     pos_sorted = np.take(pos, idx, axis=0)
     v_sorted = np.take(v, idx, axis=0)
     wt_sorted = np.take(m, idx, axis=0)
@@ -907,10 +962,7 @@ def ColumnDensity(
 ):
     """Ray-traced or angle-binned column density calculation.
 
-    Returns an estimate of the column density from the position of each particle
-    integrated to infinity, assuming the particles are represented by uniform spheres. Note
-    that optical depth can be obtained by supplying "sigma = opacity * mass" in
-    place of mass, useful in situations where opacity is highly variable.
+    Returns an estimate of the column density from the position of each particle integrated to infinity, assuming the particles are represented by uniform spheres. Note that optical depth can be obtained by supplying "sigma = opacity * mass" in place of mass, useful in situations where opacity is highly variable.
 
     Parameters
     ----------
@@ -919,48 +971,30 @@ def ColumnDensity(
     m: array_like
         shape (N,) array of particle masses
     radii: array_like
-        shape (N,) array containing particle radii of the uniform spheres that
-        we use to model the particles' mass distribution
+        shape (N,) array containing particle radii of the uniform spheres that we use to model the particles' mass distribution
     rays: None, int, or array_like, optional
-        Which ray directions to raytrace the columns (default None).
-        None: use the angular-binned column density method with 6 bins on the sky
-        OPTION 2: Integer number: use this many rays, with 6 using the standard
-        6-ray grid and other numbers sampling random directions
-        OPTION 3: Give a (N_rays,3) array of vectors specifying the
-        directions, which will be automatically normalized.
+        Which ray directions to raytrace the columns (default None). None uses the angular-binned method with 6 bins on the sky; an integer uses that many rays, with 6 giving the standard 6-ray grid and other numbers sampling random directions; a (N_rays,3) array gives the directions explicitly, and is normalized automatically.
     healpix: int, optional
         If nonzero, use a healpix ray grid with this resolution level NSIDE (default False)
     randomize_rays: bool, optional
         Randomize the orientation of the ray-grid *for each particle* (default False)
     parallel: bool, optional
-        If True, will parallelize the column density over all available cores.
-        (default False)
+        If True, will parallelize the column density over all available cores. (default False)
     tree: Octree, optional
-        optional pre-generated Octree: this can contain any set of particles,
-        not necessarily the target particles at pos (default None)
+        optional pre-generated Octree: this can contain any set of particles, not necessarily the target particles at pos (default None)
     theta: float, optional
         Opening angle for the beam-traced angular bin estimator (default 0.5)
     return_tree: bool, optional
         return the tree used for future use (default False)
     group_size: int, optional
-        Targets sharing one tree traversal (default 16, measured best from N=3e4 to 1e6). Amortizes
-        the descent. Bit-identical for the ray-traced path; for rays=None the group opens a superset
-        of nodes, which halves the bin-to-bin scatter, so the answer shifts slightly and is more
-        accurate. Ignored with randomize_rays or below COLUMN_GROUP_MIN_TARGETS targets; 1 gives the
-        per-target walk.
+        Targets sharing one tree traversal, amortizing the descent (default 16). Bit-identical to the per-target walk for the ray-traced path; for rays=None the group opens a superset of nodes, so the answer shifts slightly and is somewhat more accurate. Ignored with randomize_rays or below COLUMN_GROUP_MIN_TARGETS targets; 1 gives the per-target walk.
     device: str, optional
-        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and applies only
-        to the ray-traced path (rays given, randomize_rays off). It is float32: on a real STARFORGE
-        snapshot the relative error against this float64 path was 2e-6 median, 9e-4 at p99.99 and
-        2.5e-2 at worst, the largest errors falling on the densest sightlines. It also repacks and
-        uploads the tree on every call -- for repeated evaluation hold a
-        pytreegrav.cuda.CudaColumnDensity instead. Expect ~8x on clustered production data.
+        'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and applies only to the ray-traced path (rays given, randomize_rays off). It is float32: relative error against this path is ~2e-6 typical, reaching ~1e-2 on the densest sightlines. It repacks and uploads the tree on every call -- for repeated evaluation hold a pytreegrav.cuda.CudaColumnDensity instead.
 
     Returns
     -------
     columns: array_like
-        shape (N,N_rays) float array of column densities from particle
-        centers integrated along the rays
+        shape (N,N_rays) float array of column densities from particle centers integrated along the rays
     """
 
     if np.any(np.asarray(radii) <= 0):
@@ -971,12 +1005,12 @@ def ColumnDensity(
             "density. Supply a nonzero radius if their mass should be included."
         )
 
-    pos = np.float64(pos)
+    pos = _f64(pos)
     if tree is None:
         tree = ConstructTree(
             pos,
-            np.float64(m),
-            np.float64(radii),
+            _f64(m),
+            _f64(radii),
         )  # build the tree if needed
         # the tree was just built from pos, so its walk order already is pos's Morton order
         idx = tree.TreewalkIndices
@@ -1003,6 +1037,12 @@ def ColumnDensity(
         raise Exception("rays argument type is not supported")
 
     if healpix:
+        # Imported here, not at module scope: healpy is not in install_requires (nothing else in the
+        # package needs it), and `hp` was simply never bound, so this path raised NameError.
+        try:
+            import healpy as hp
+        except ImportError as e:
+            raise ImportError("healpix=... needs healpy: pip install healpy") from e
         nside = healpix
         npix = hp.nside2npix(nside)
         rays = np.array(hp.pix2vec(nside, np.arange(npix))).T

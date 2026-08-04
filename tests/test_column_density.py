@@ -365,7 +365,7 @@ def test_randomize_rays_matches_direct_sum(nrays, parallel):
     got = ColumnDensity(x, m, h, rays=rays, randomize_rays=True, parallel=parallel)
 
     # ColumnDensity built its tree from (x, m, h); rebuild the identical one for its walk order
-    idx = ConstructTree(np.float64(x), np.float64(m), np.float64(h)).TreewalkIndices
+    idx = ConstructTree(np.asarray(x, np.float64), np.asarray(m, np.float64), np.asarray(h, np.float64)).TreewalkIndices
     want = np.empty_like(got)
     for k, orig in enumerate(idx):
         want[orig] = column_reference(x[orig], rays @ random_rotation(k), x, m, h)[0]
@@ -381,7 +381,7 @@ def test_randomize_rays_with_prebuilt_tree(nrays):
 
     got = ColumnDensity(x, m, h, rays=rays, randomize_rays=True, tree=tree, parallel=True)
 
-    idx = _morton_order(np.float64(x))
+    idx = _morton_order(np.asarray(x, np.float64))
     want = np.empty_like(got)
     for k, orig in enumerate(idx):
         want[orig] = column_reference(x[orig], rays @ random_rotation(k), x, m, h)[0]

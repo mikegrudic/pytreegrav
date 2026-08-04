@@ -52,7 +52,21 @@ def bench(f, *args, budget=2.0, max_reps=50, **kwargs):
     return best
 
 
-def run(nmin, nmax_tree, nmax_bf, per_decade, theta, budget):
+def backends(cuda, nmax_bf, nmax_bf_cuda):
+    """(tag, solver kwargs, brute-force cap) per measured backend, CUDA last and only if available."""
+    out = [
+        ("ser", {"parallel": False}, nmax_bf),
+        ("par", {"parallel": True}, nmax_bf),
+    ]
+    if cuda:
+        # device='cuda' is one-shot: each rep repacks and re-uploads the tree, exactly as the CPU
+        # columns rebuild nothing -- so this is the honest single-call comparison, not the
+        # tree-resident one you get from holding a pytreegrav.cuda.CudaPotential.
+        out.append(("cuda", {"parallel": True, "device": "cuda"}, nmax_bf_cuda))
+    return out
+
+
+def run(nmin, nmax_tree, nmax_bf, nmax_bf_cuda, per_decade, theta, budget, cuda):
     from numba import get_num_threads
     from pytreegrav import Accel, Potential
 
@@ -60,37 +74,35 @@ def run(nmin, nmax_tree, nmax_bf, per_decade, theta, budget):
     decades = np.log10(nmax_tree / nmin)
     npoints = int(round(decades * per_decade)) + 1
     Ns = np.unique(np.int64(np.round(np.logspace(np.log10(nmin), np.log10(nmax_tree), npoints))))
+    bks = backends(cuda, nmax_bf, nmax_bf_cuda)
 
-    # Warm every specialization once, cheaply, so no timed point pays a compile.
+    # Warm every specialization once, cheaply, so no timed point pays a compile.  The CUDA kernels go
+    # through NVRTC, which is seconds -- much worse to leave in a timed point than numba's own JIT.
     pos, m = plummer(256)
     h = np.zeros(256)
-    for parallel in (False, True):
+    for _, kw, _ in bks:
         for method in ("tree", "bruteforce"):
-            Potential(pos, m, h, method=method, parallel=parallel, theta=theta)
-            Accel(pos, m, h, method=method, parallel=parallel, theta=theta)
+            Potential(pos, m, h, method=method, theta=theta, **kw)
+            Accel(pos, m, h, method=method, theta=theta, **kw)
 
-    res = {
-        f"{q}_{method}_{tag}": {} for q in ("pot", "acc") for method in ("tree", "bruteforce") for tag in ("ser", "par")
-    }
+    res = {f"{q}_{method}_{tag}": {} for q in ("pot", "acc") for method in ("tree", "bruteforce") for tag, _, _ in bks}
 
-    print(f"threads = {nthreads}, theta = {theta}")
-    header = ["ser pot tree", "ser acc tree", "ser pot bf", "ser acc bf"]
-    header += ["par pot tree", "par acc tree", "par pot bf", "par acc bf"]
+    print(f"threads = {nthreads}, theta = {theta}" + (", cuda" if cuda else ""))
+    header = [f"{tag} {q} {mn}" for tag, _, _ in bks for mn in ("tree", "bf") for q in ("pot", "acc")]
     print(f"{'N':>9s} | " + " ".join(f"{c:>12s}" for c in header) + "   (us/particle)")
-    print("-" * 122)
+    print("-" * (12 + 13 * len(header)))
     for N in Ns:
         N = int(N)
         pos, m = plummer(N)
         h = np.zeros(N)
         row = []
-        for parallel in (False, True):
-            tag = "par" if parallel else "ser"
+        for tag, kw, bf_cap in bks:
             for method in ("tree", "bruteforce"):
-                if method == "bruteforce" and N > nmax_bf:
+                if method == "bruteforce" and N > bf_cap:
                     row += ["--", "--"]
                     continue
                 for q, fn in (("pot", Potential), ("acc", Accel)):
-                    t = bench(fn, pos, m, h, budget=budget, method=method, parallel=parallel, theta=theta)
+                    t = bench(fn, pos, m, h, budget=budget, method=method, theta=theta, **kw)
                     res[f"{q}_{method}_{tag}"][N] = t / N
                     row.append(f"{t / N * 1e6:.4f}")
         print(f"{N:9d} | " + " ".join(f"{v:>12s}" for v in row), flush=True)
@@ -114,7 +126,10 @@ def plot(res, nthreads, theta, out, panels="both"):
         "both": [("ser", "Serial"), ("par", "Parallel")],
         "serial": [("ser", "Serial")],
         "parallel": [("par", "Parallel")],
+        "all": [("ser", "Serial"), ("par", "Parallel"), ("cuda", "CUDA")],
+        "cuda": [("cuda", "CUDA")],
     }[panels]
+    wanted = [w for w in wanted if any(res.get(f"{k}_{w[0]}") for k, _, _ in series)]
     fig, axes = plt.subplots(1, len(wanted), figsize=(5.9 * len(wanted), 5.4), sharey=True, squeeze=False)
     axes = axes[0]
     for ax, (tag, title) in zip(axes, wanted):
@@ -128,14 +143,26 @@ def plot(res, nthreads, theta, out, panels="both"):
         ax.set_yscale("log")
         ax.set_xlabel("Number of particles")
         ax.text(0.04, 0.93, title, transform=ax.transAxes, fontsize=17, va="top")
-        ax.legend(loc="lower right", frameon=True, fontsize=9.5)
         ax.grid(alpha=0.15, which="both", lw=0.5)
         ax.set_box_aspect(1)
     axes[0].set_ylabel("Time per particle (s)")
-    # only mention the thread count when a parallel panel is actually shown
-    thread_note = f", {nthreads} threads" if any(t == "par" for t, _ in wanted) else ", single core"
+    handles, labels = axes[0].get_legend_handles_labels()
+    # only mention the thread count when a CPU-parallel panel is actually shown
+    tags = {t for t, _ in wanted}
+    thread_note = f", {nthreads} threads" if "par" in tags else ("" if "cuda" in tags else ", single core")
     fig.suptitle(f"pytreegrav scaling - Plummer, theta={theta}{thread_note}", fontsize=10, y=0.98)
     fig.tight_layout()
+    # One legend under the panels rather than per-axes, added after tight_layout so it does not collide
+    # with the x labels: in the CUDA panel the tree curves flatten into exactly the corner an inset
+    # legend wants, and no single corner is free in all panels.
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=min(4, len(labels)),
+        frameon=False,
+        bbox_to_anchor=(0.5, -0.005),
+    )
     fig.savefig(out, dpi=150, bbox_inches="tight")
 
 
@@ -144,14 +171,29 @@ def main():
     ap.add_argument("--nmin", type=float, default=64)
     ap.add_argument("--nmax-tree", type=float, default=1e6)
     ap.add_argument("--nmax-bf", type=float, default=1e5, help="brute force is O(N^2); cap it")
+    ap.add_argument(
+        "--nmax-bf-cuda",
+        type=float,
+        default=1e6,
+        help="separate brute-force cap for CUDA, which sustains ~40x the CPU pair rate",
+    )
     ap.add_argument("--per-decade", type=int, default=4)
     ap.add_argument("--theta", type=float, default=0.7, help="library default")
     ap.add_argument("--budget", type=float, default=2.0, help="seconds per timing point")
     ap.add_argument("-o", "--out", default="benchmark_scaling.png")
     ap.add_argument("--data", default="benchmark_scaling.json", help="raw timings, for re-plotting")
-    ap.add_argument("--panels", choices=("both", "serial", "parallel"), default="both")
+    ap.add_argument("--panels", choices=("both", "serial", "parallel", "all", "cuda"), default="both")
+    ap.add_argument("--cuda", action="store_true", help="also measure device='cuda' (needs pytreegrav[cuda])")
     ap.add_argument("--replot-from", metavar="JSON", help="skip the sweep; re-render from a saved --data file")
     args = ap.parse_args()
+
+    if args.cuda:
+        from pytreegrav.cuda import is_available
+
+        if not is_available():
+            ap.error("--cuda given but numba-cuda is not installed or no device is visible")
+        if args.panels == "both":
+            args.panels = "all"
 
     if args.replot_from:
         with open(args.replot_from) as fp:
@@ -161,7 +203,9 @@ def main():
         print(f"wrote {args.out} (replotted from {args.replot_from})")
         return
 
-    res, nthreads = run(args.nmin, args.nmax_tree, args.nmax_bf, args.per_decade, args.theta, args.budget)
+    res, nthreads = run(
+        args.nmin, args.nmax_tree, args.nmax_bf, args.nmax_bf_cuda, args.per_decade, args.theta, args.budget, args.cuda
+    )
 
     with open(args.data, "w") as fp:
         json.dump(

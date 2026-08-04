@@ -55,8 +55,7 @@ MORTON_MAX_ROUNDS = 3
 def _spread_bits(x):
     """Spread the low 21 bits of x so that they occupy every third bit (bit i -> bit 3i).
 
-    Standard libmorton magic-number method for interleaving a 21-bit coordinate into a 63-bit
-    Morton key.
+    Standard libmorton magic-number method for interleaving a 21-bit coordinate into a 63-bit Morton key.
     """
     x &= 0x1FFFFF
     x = (x | (x << 32)) & 0x1F00000000FFFF
@@ -71,9 +70,7 @@ def _spread_bits(x):
 def _morton_keys(points, center, size):
     """Compute 63-bit Morton (Z-order) keys for points within the cube of given center and side.
 
-    The cube spans [center - size/2, center + size/2] in each dimension.  Coordinates are quantized
-    to MORTON_BITS bits per dimension and interleaved with x in the least-significant bit of each
-    triplet, matching the octant convention used elsewhere (octant = (x>c) + 2*(y>c) + 4*(z>c)).
+    The cube spans [center - size/2, center + size/2] in each dimension.  Coordinates are quantized to MORTON_BITS bits per dimension and interleaved with x in the least-significant bit of each triplet, matching the octant convention used elsewhere (octant = (x>c) + 2*(y>c) + 4*(z>c)).
     """
     n = points.shape[0]
     keys = np.empty(n, dtype=np.int64)
@@ -105,9 +102,7 @@ def _morton_keys(points, center, size):
 def _radix_argsort(keys):
     """Stable LSD radix sort of nonnegative int64 keys, returning the sorting permutation.
 
-    Carries the keys alongside the indices so every pass reads sequentially. Reading
-    keys[idx[i]] instead (an indirect gather, twice per pass) measured 3.4x slower at N=1e7.
-    11 bits per pass covers 63 bits in 6 passes with a 2048-entry histogram that stays in L1.
+    Carries the keys alongside the indices so every pass reads sequentially. Reading keys[idx[i]] instead (an indirect gather, twice per pass) measured 3.4x slower at N=1e7. 11 bits per pass covers 63 bits in 6 passes with a 2048-entry histogram that stays in L1.
     """
     n = keys.shape[0]
     idx = np.arange(n).astype(np.int64)
@@ -148,8 +143,7 @@ BSEARCH_MIN = 512
 def _grow_moment_arrays(acc, parent, n):
     """Re-allocate the moment accumulators to n node slots, preserving contents.
 
-    Called whenever increase_tree_size grows the tree underneath them; kept as a free function
-    because increase_tree_size only knows about the jitclass, not these build-local arrays.
+    Called whenever increase_tree_size grows the tree underneath them; kept as a free function because increase_tree_size only knows about the jitclass, not these build-local arrays.
     """
     acc_new = zeros((n, 3))
     acc_new[: acc.shape[0]] = acc
@@ -162,8 +156,7 @@ def _grow_moment_arrays(acc, parent, n):
 def _digit_upper_bound(keys, lo, hi, shift, d):
     """First index in [lo, hi) whose Morton digit at `shift` exceeds d.
 
-    Valid because every bit above `shift` is equal across a node's range, so within that range
-    sorted keys imply a non-decreasing digit at `shift`.
+    Valid because every bit above `shift` is equal across a node's range, so within that range sorted keys imply a non-decreasing digit at `shift`.
     """
     while lo < hi:
         mid = (lo + hi) >> 1
@@ -178,8 +171,7 @@ def _digit_upper_bound(keys, lo, hi, shift, d):
 def _octant_runs(keys, lo, hi, shift, bs, be, bd):
     """Split [lo, hi) into its per-octant contiguous runs; returns the number of runs found.
 
-    Fills bs/be/bd (each length 8) with the start, end and octant digit of each run. Since the
-    keys are Morton-sorted, each octant's members are already contiguous.
+    Fills bs/be/bd (each length 8) with the start, end and octant digit of each run. Since the keys are Morton-sorted, each octant's members are already contiguous.
     """
     nb = 0
     start = lo
@@ -208,22 +200,13 @@ def _octant_runs(keys, lo, hi, shift, bs, be, bd):
 def RollupMoments(tree, acc, parent, node_hi):
     """Bottom-up moments as a reverse linear scan, replacing the ComputeMoments traversal.
 
-    The split allocates node indices in DFS discovery order, so every descendant of a node has a
-    higher index than the node itself. Walking indices downward therefore reaches every child
-    before its parent with no links dereferenced -- the traversal that made ComputeMomentsLinked
-    DRAM-latency bound disappears, leaving one sequential pass with a single scattered write per
-    node.
+    The split allocates node indices in DFS discovery order, so every descendant of a node has a higher index than the node itself. Walking indices downward therefore reaches every child before its parent with no links dereferenced, replacing the DRAM-latency-bound traversal of ComputeMomentsLinked with one sequential pass and a single scattered write per node.
 
-    Particle contributions are already folded in by the split, which sees each particle leaf
-    while it is standing on the parent node. This pass only rolls nodes into their parents.
+    Particle contributions are already folded in by the split, which sees each particle leaf while it is standing on the parent node. This pass only rolls nodes into their parents.
 
-    `acc` holds the running sum of mass * position, indexed by (node - NumParticles), kept apart
-    from Coordinates because Coordinates still holds each node's geometric centre -- needed both
-    by the split, to place children, and here, to get Deltas. Reading that centre and replacing
-    it with the centre of mass in the same step is safe: the split is finished with it.
+    `acc` holds the running sum of mass * position, indexed by (node - NumParticles), kept apart from Coordinates because Coordinates still holds each node's geometric centre -- needed by the split to place children, and here to get Deltas. Overwriting that centre with the centre of mass in the same step is safe: the split is finished with it.
 
-    Monopole only. Quadrupoles need each parent's centre of mass to shift onto, so they come
-    from RollupQuadrupoles in a second pass once this one has finished.
+    Monopole only. Quadrupoles need each parent's centre of mass to shift onto, so they come from RollupQuadrupoles in a second pass once this one has finished.
     """
     npart = tree.NumParticles
     for node in range(node_hi - 1, npart - 1, -1):
@@ -252,9 +235,7 @@ def RollupMoments(tree, acc, parent, node_hi):
 def _shift_quad_into(Q, p, m, r0, r1, r2):
     """Add a mass m displaced by r from node p's centre of mass into p's quadrupole.
 
-    The parallel-axis term of the reduced (traceless) quadrupole: m * (3 r_k r_l - delta_kl r^2).
-    Written out rather than looped over k,l so nothing has to allocate a length-3 vector inside
-    the per-particle loop.
+    The parallel-axis term of the reduced (traceless) quadrupole: m * (3 r_k r_l - delta_kl r^2). Written out rather than looped over k,l so nothing has to allocate a length-3 vector inside the per-particle loop.
     """
     rsq = r0 * r0 + r1 * r1 + r2 * r2
     Q[p, 0, 0] += m * (3.0 * r0 * r0 - rsq)
@@ -272,18 +253,12 @@ def _shift_quad_into(Q, p, m, r0, r1, r2):
 def RollupQuadrupoles(tree, parent, pparent, node_hi):
     """Second bottom-up pass giving every node its quadrupole, again with no traversal.
 
-    Must run after RollupMoments: shifting a child's moment onto its parent needs the parent's
-    centre of mass, Q_p += Q_c + m_c (3 r r - r^2 I) with r = com_c - com_p, and that is only
-    known once the monopole pass has finished.
+    Must run after RollupMoments: shifting a child's moment onto its parent needs the parent's centre of mass, Q_p += Q_c + m_c (3 r r - r^2 I) with r = com_c - com_p, and that is only known once the monopole pass has finished.
 
     Two stages, in this order:
 
-      1. every particle into the node that owns it (a particle's own quadrupole is zero, so it
-         contributes the shift term alone).  `pparent` is recorded by the split, which sees each
-         particle leaf while standing on its parent;
-      2. every node into its parent, indices descending.  By the time a node is reached its own
-         quadrupole is complete -- its node children were pushed earlier in this same descending
-         scan, and all of its particle children were pushed in stage 1.
+      1. every particle into the node that owns it (a particle's own quadrupole is zero, so it contributes the shift term alone).  `pparent` is recorded by the split, which sees each particle leaf while standing on its parent;
+      2. every node into its parent, indices descending.  By the time a node is reached its own quadrupole is complete -- its node children were pushed earlier in this same descending scan, and all of its particle children were pushed in stage 1.
 
     Both stages are streaming scans over contiguous index ranges, like RollupMoments.
     """
@@ -321,9 +296,7 @@ def RollupQuadrupoles(tree, parent, pparent, node_hi):
 def ComputeMomentsLinked(tree, no):
     """ComputeMoments without a `children` array: iterate children via FirstSubnode/NextBranch.
 
-    A node's children are the chain starting at FirstSubnode[no] and following NextBranch until
-    it reaches NextBranch[no] (which the last child points at), so no separate child table is
-    needed. Same recursion and same arithmetic as ComputeMoments otherwise.
+    A node's children are the chain starting at FirstSubnode[no] and following NextBranch until it reaches NextBranch[no] (which the last child points at), so no separate child table is needed. Same recursion and same arithmetic as ComputeMoments otherwise.
     """
     quad = zeros((3, 3))
     if no < tree.NumParticles:
@@ -407,10 +380,7 @@ PARALLEL_PERMUTE_NMIN = 100_000
 def _count_subtree(keys, lo, hi, shift):
     """Return (nodes, deferrals) for the subtree the split would build under [lo, hi).
 
-    Mirrors the split exactly with every store removed, so the two agree by construction -- which
-    is what makes it safe to hand each worker a private, exactly-sized block of node indices. The
-    partition depends only on the Morton digits, never on coordinates, which is why counting can
-    skip all the geometry.
+    Mirrors the split exactly with every store removed, so the two agree by construction -- which is what makes it safe to hand each worker a private, exactly-sized block of node indices. The partition depends only on the Morton digits, never on coordinates, which is why counting can skip all the geometry.
 
     A group whose key is exhausted (shift < 0) is counted as one deferral and not descended into.
     """
@@ -485,10 +455,7 @@ def _split_subtree(
 ):
     """Build the subtree under `node`, taking node indices from `next_idx`.
 
-    Identical to the body of the serial split loop, but writing into a caller-owned index block
-    and recording key-exhausted groups into a caller-owned deferral slice instead of re-keying
-    them. Everything it touches -- the particle range [lo, hi), the node block, the deferral
-    slots -- belongs to this call alone, which is what makes concurrent calls safe.
+    Identical to the body of the serial split loop, but writing into a caller-owned index block and recording key-exhausted groups into a caller-owned deferral slice instead of re-keying them. Everything it touches -- the particle range [lo, hi), the node block, the deferral slots -- belongs to this call alone, which is what makes concurrent calls safe.
 
     Returns (next free node index, number of deferrals recorded).
     """
@@ -571,11 +538,9 @@ def _split_subtree(
 
 @njit(cache=True)
 def _bounding_cube(points):
-    """(centre, side) of the smallest cube covering points, as BuildTree defines it: per-dimension
-    midpoint centre, side = the largest per-dimension extent.
+    """(centre, side) of the smallest cube covering points, as BuildTree defines it: per-dimension midpoint centre, side = the largest per-dimension extent.
 
-    One fused row-major pass. The obvious `points[:, dim].min()` per dimension walks the array six
-    times with a 24-byte stride. Min and max are order-independent, so this is bit-identical.
+    One fused row-major pass. The obvious `points[:, dim].min()` per dimension walks the array six times with a 24-byte stride. Min and max are order-independent, so this is bit-identical.
     """
     n = points.shape[0]
     lo0 = hi0 = points[0, 0]
@@ -613,9 +578,7 @@ def _bounding_cube(points):
 def _permute_particles(order, points, masses, softening, keys, Coord, Mass, Soft, keys_sorted):
     """Gather particle data into Morton order.
 
-    A pure gather: each iteration writes one distinct destination row and reads nothing another
-    iteration writes, so it needs no coordination whatsoever. Reads are scattered (that is what a
-    permutation is) but writes are sequential, so the threads mostly stream.
+    A pure gather: each iteration writes one distinct destination row and reads nothing another iteration writes, so it needs no coordination whatsoever. Reads are scattered (that is what a permutation is) but writes are sequential, so the threads mostly stream.
 
     A free function because prange is unavailable inside a jitclass method.
     """
@@ -854,19 +817,11 @@ class Octree:
     def BuildTreeRadix(self, points, masses, softening):
         """Build the octree from Morton-sorted points in a single linear pass.
 
-        Computes a 63-bit Morton (Z-order) key per point, radix-sorts them, then walks the sorted
-        array top-down splitting each node's contiguous range by the 3-bit Morton digit at that
-        level.  Because the sort already yields the depth-first (Morton) ordering, the particles are
-        stored in that order and TreewalkIndices records the permutation - no second build is needed.
+        Computes a 63-bit Morton (Z-order) key per point, radix-sorts them, then walks the sorted array top-down splitting each node's contiguous range by the 3-bit Morton digit at that level.  Because the sort already yields the depth-first (Morton) ordering, the particles are stored in that order and TreewalkIndices records the permutation - no second build is needed.
 
-        Also seeds the moments as it goes: whenever the split emits a single-particle child it is
-        already standing on the parent node, so that particle's mass, mass-weighted position and
-        softening are folded straight in, and `parent` records each node's parent. RollupMoments
-        then finishes the job with one reverse scan instead of a tree traversal.
+        Also seeds the moments as it goes: whenever the split emits a single-particle child it is already standing on the parent node, so that particle's mass, mass-weighted position and softening are folded straight in, and `parent` records each node's parent. RollupMoments then finishes the job with one reverse scan instead of a tree traversal.
 
-        Returns (new_node_idx, acc, parent, pparent), where acc holds the running sum of
-        mass * position and parent the owning node, both indexed by (node - NumParticles), and
-        pparent maps each particle to its owning node (populated only when HasQuads).
+        Returns (new_node_idx, acc, parent, pparent), where acc holds the running sum of mass * position and parent the owning node, both indexed by (node - NumParticles), and pparent maps each particle to its owning node (populated only when HasQuads).
         """
         N = points.shape[0]
 
@@ -1138,10 +1093,7 @@ class Octree:
     def RekeySlice(self, keys_sorted, node, lo, hi):
         """Recompute Morton keys for particles [lo, hi) relative to node's cell and re-sort them.
 
-        Used when a group of points collides (shares a key) at the deepest level: treating the
-        node's cell as a fresh root gives MORTON_BITS more bits of resolution per dimension.  The
-        particle data (Coordinates/Masses/Softenings/TreewalkIndices) and keys_sorted are all
-        permuted consistently so the slice stays Morton-sorted.
+        Used when a group of points collides (shares a key) at the deepest level: treating the node's cell as a fresh root gives MORTON_BITS more bits of resolution per dimension.  The particle data (Coordinates/Masses/Softenings/TreewalkIndices) and keys_sorted are all permuted consistently so the slice stays Morton-sorted.
         """
         g = hi - lo
         sub = self.Coordinates[lo:hi]
@@ -1176,12 +1128,9 @@ class Octree:
     def BuildBucket(self, node, lo, hi, new_node_idx, acc, parent, pparent):
         """Attach particles [lo, hi), coincident to float precision, as a chain of nodes under node.
 
-        Each node holds up to 8 particle children; when more remain, the 8th slot links to a
-        further node. Links FirstSubnode/NextBranch directly, as the digit loop does. Geometry is
-        degenerate (the points coincide) but valid, and no particle is dropped.
+        Each node holds up to 8 particle children; when more remain, the 8th slot links to a further node. Links FirstSubnode/NextBranch directly, as the digit loop does. Geometry is degenerate (the points coincide) but valid, and no particle is dropped.
 
-        Seeds moments the same way the digit loop does. The caller must have reserved enough node
-        slots for the whole chain, since growing the tree here would leave acc/parent behind.
+        Seeds moments the same way the digit loop does. The caller must have reserved enough node slots for the whole chain, since growing the tree here would leave acc/parent behind.
         """
         self.HasCoincidentPoints = True  # only reachable for bit-identical positions
         count = hi - lo
@@ -1305,8 +1254,7 @@ def ComputeMoments(tree, no, children):
 
 @njit
 def SetupTreewalk(tree, no, children):
-    """Recursively link each node to its first subnode and its next sibling branch, so a walk
-    can traverse the tree iteratively (opening a node -> FirstSubnode, accepting -> NextBranch)."""
+    """Recursively link each node to its first subnode and its next sibling branch, so a walk can traverse the tree iteratively (opening a node -> FirstSubnode, accepting -> NextBranch)."""
     if no < tree.NumParticles:
         return  # leaf nodes are handled from above
     last_node = -1

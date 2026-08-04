@@ -172,6 +172,10 @@ def test_duplicates_at_the_origin_terminate(kwargs):
 
     A hang cannot be caught in-process, so this runs in a subprocess under a timeout; without
     the fix the two insertion cases spin until killed.
+
+    The timeout is deliberately far above the real cost (5 s on a warm numba cache, 19-24 s on a CI
+    runner) because the failure it detects is an *infinite* loop -- no finite timeout distinguishes 120 s
+    from 600 s for that, while the tight one made this flaky on cold/slow machines.
     """
     src = textwrap.dedent(f"""
         import warnings, numpy as np
@@ -186,7 +190,7 @@ def test_duplicates_at_the_origin_terminate(kwargs):
         print("OK")
     """)
     try:
-        r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=120)
+        r = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired:
         pytest.fail(f"build with {kwargs} hung on duplicates at the origin")
     assert r.returncode == 0, f"rc={r.returncode}: {r.stderr[-2000:]}"

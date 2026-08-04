@@ -29,17 +29,14 @@ def acceptance_criterion(r: float, h: float, size: float, delta: float, theta: f
 def subtree_end(tree, no):
     """Index at which a walk started at ``no`` must stop to stay inside no's subtree.
 
-    Depth-first order resumes at ``NextBranch[no]`` once the subtree is done; without this bound the
-    chain leads back out and keeps going.  -1 at the root, so the default whole-tree walk is unaffected.
+    Depth-first order resumes at ``NextBranch[no]`` once the subtree is done; without this bound the chain leads back out and keeps going.  -1 at the root, so the default whole-tree walk is unaffected.
     """
     return tree.NextBranch[no]
 
 
 @njit(int64(float64, float64, float64), inline="always", fastmath=True)
 def angular_bin_scalar(dx0, dx1, dx2):
-    """Angular bin of a separation, taken as scalars so grouped kernels can call it in their target
-    loop without materializing a length-3 array -- the allocation that made grouped_treewalk's
-    quadrupole kernel anti-scale."""
+    """Angular bin of a separation, taken as scalars so grouped kernels can call it in their target loop without materializing a length-3 array -- the allocation that made grouped_treewalk's quadrupole kernel anti-scale."""
     if fabs(dx0) > fabs(dx1) and fabs(dx0) > fabs(dx2):
         return 0 if dx0 > 0 else 1
     elif fabs(dx1) > fabs(dx2):
@@ -346,8 +343,7 @@ AccelTarget_tree = njit(AccelTarget_tree, fastmath=True)
 
 @njit(fastmath=True)
 def do_weighted_binning(tree, no, rbins, mbin, r, r_idx, quantity):
-    """(experimental) Spread a node's contribution across the radial bins its extent overlaps,
-    weighted by the overlap fraction, instead of assigning it all to the bin containing r."""
+    """(experimental) Spread a node's contribution across the radial bins its extent overlaps, weighted by the overlap fraction, instead of assigning it all to the bin containing r."""
     h = 0.5 * tree.Sizes[no]
     Nbins = rbins.shape[0] - 1
     if (r + h < rbins[r_idx + 1]) and (r - h > rbins[r_idx]):
@@ -543,8 +539,7 @@ def VelocityCorrWalk(
     weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    (wtsums, binsums) - per-bin weight sums and weighted v . v' sums; the caller divides one by the
-    other to form the correlation function
+    (wtsums, binsums) - per-bin weight sums and weighted v . v' sums; the caller divides one by the other to form the correlation function
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -697,8 +692,7 @@ def VelocityStructWalk(
     weighted_binning - (experimental) if True, distribute mass among radial bins with a weighted kernel instead of assigning each node to a single bin (default False)
 
     Returns:
-    (wtsums, binsums) - per-bin weight sums and weighted (v - v')^2 sums; the caller divides one by
-    the other to form the structure function
+    (wtsums, binsums) - per-bin weight sums and weighted (v - v')^2 sums; the caller divides one by the other to form the structure function
     """
     if no < 0:
         no = tree.NumParticles  # we default to the top-level node index
@@ -1093,19 +1087,11 @@ ColumnDensity_tree = njit(ColumnDensity_tree, fastmath=True)
 def ColumnDensity_grouped(pos_target, rays, tree, group_size=16):
     """Ray-traced column density, traversing the tree once per (group of targets, ray direction).
 
-    The amortization grouped_treewalk applies to gravity.  Morton-order targets make each group
-    spatially compact, so for a fixed direction their rays are parallel lines separated by at most the
-    group's extent; inflating the acceptance reach by the group bbox half-diagonal ``E`` therefore
-    opens a superset of what any individual ray would.  Accepted leaves then loop over the group with
-    the leaf's mass and reciprocal radius hoisted into registers, trading G gather-driven traversals
-    for one traversal plus G register-only tests.
+    The amortization grouped_treewalk applies to gravity.  Morton-order targets make each group spatially compact, so for a fixed direction their rays are parallel lines separated by at most the group's extent; inflating the acceptance reach by the group bbox half-diagonal ``E`` therefore opens a superset of what any individual ray would.  Accepted leaves then loop over the group with the leaf's mass and reciprocal radius hoisted into registers, trading G gather-driven traversals for one traversal plus G register-only tests.
 
-    Output is bit-identical at every group_size -- the superset only adds leaves contributing nothing,
-    and each target accumulates in the same depth-first order.  Measured against group_size=1 at
-    12 rays: 2.80x at N=3e5, 2.5x at N=3e4; group_size=16 best at both.
+    Output is bit-identical at every group_size -- the superset only adds leaves contributing nothing, and each target accumulates in the same depth-first order.  group_size=16 measured ~2.5-2.8x over the per-target walk at 12 rays, N=3e4 to 3e5.
 
-    Not usable with randomize_rays, which gives each target its own rotated grid; grouping needs a
-    shared one.
+    Not usable with randomize_rays, which gives each target its own rotated grid; grouping needs a shared one.
 
     Arguments:
     pos_target -- shape (N,3) target positions, in Morton order for grouping to be effective
@@ -1211,16 +1197,9 @@ ColumnDensity_grouped = njit(ColumnDensity_grouped, fastmath=True)
 def ColumnDensityBinned_grouped(pos_target, tree, theta=0.5, group_size=16):
     """Angular-binned (rays=None) column density, one traversal per group of Morton-adjacent targets.
 
-    Structurally grouped_treewalk's gravity walk: acceptance uses ``r_min``, the nearest distance from
-    the node to the group's bounding box (0 if inside).  That is at most any member's own distance, so
-    the group opens a superset of what any individual target would -- conservative.
+    Structurally grouped_treewalk's gravity walk: acceptance uses ``r_min``, the nearest distance from the node to the group's bounding box (0 if inside).  That is at most any member's own distance, so the group opens a superset of what any individual target would -- conservative.
 
-    Unlike the ray-traced grouped walk this is **not** bit-identical, because nodes themselves
-    contribute: a finer node set splits each node's mass across the sky bins differently.  That is an
-    improvement.  On the glass sphere, whose central column is exactly rho*R in every direction, the
-    mean/truth goes 0.9401 -> 0.9426 and the bin spread 0.792-1.095 -> 0.870-1.046 from per-target to
-    group_size=16 -- the dominant error nearly halved, alongside a 2.3x speedup.  group_size=1 makes
-    r_min exact and recovers the per-target result.
+    Unlike the ray-traced grouped walk this is **not** bit-identical, because nodes themselves contribute: a finer node set splits each node's mass across the sky bins differently.  That is an improvement -- on a glass sphere, group_size=16 roughly halves the bin-to-bin spread that dominates the error, alongside a 2.3x speedup.  group_size=1 makes r_min exact and recovers the per-target result.
 
     Arguments:
     pos_target -- shape (N,3) target positions, in Morton order for grouping to be effective

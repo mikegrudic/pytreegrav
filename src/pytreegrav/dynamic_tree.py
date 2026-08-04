@@ -63,14 +63,9 @@ octant_offsets = 0.25 * np.array(
 def increase_dynamic_tree_size(tree, fac=1.2):
     """Reallocate a DynamicOctree's node arrays with storage increased by factor fac.
 
-    DynamicOctree used to allocate exactly 2*NumParticles slots and never check the bound, so
-    any input needing more wrote off the end of every node array and took the interpreter down
-    with a SIGSEGV. Coincident particles reach that state easily: they are perturbed apart by
-    only ~3e-16, which then takes a chain of ~50 subdivisions to separate, and each duplicated
-    pair costs that many extra nodes.
+    2*NumParticles slots is not an upper bound, and overrunning it writes off the end of every node array (numba does not bounds-check) for a SIGSEGV rather than an exception. Coincident particles get there easily: perturbed apart by only ~3e-16, each duplicated pair then needs a chain of ~50 subdivisions to separate.
 
-    Mirrors octree.increase_tree_size, plus Velocities and VelocityDisp. The caller must also
-    grow its local `children` table by the returned amount.
+    Mirrors octree.increase_tree_size, plus Velocities and VelocityDisp. The caller must also grow its local `children` table by the returned amount.
     """
     old_size = tree.NumNodes
     size_increase = max(int(old_size * fac + 1) - old_size, 1)
@@ -251,8 +246,7 @@ class DynamicOctree(object):
 
 @njit
 def ComputeMomentsDynamic(tree, no, children):
-    """Recursive pass computing each node's center of mass, total mass, max softening, mean
-    velocity and the offset between geometric center and COM (the DynamicOctree variant)."""
+    """Recursive pass computing each node's center of mass, total mass, max softening, mean velocity and the offset between geometric center and COM (the DynamicOctree variant)."""
     quad = zeros((3, 3))
     if no < tree.NumParticles:  # if this is a particle, just return the properties
         return (
@@ -318,8 +312,7 @@ def ComputeMomentsDynamic(tree, no, children):
 
 @njit
 def SetupTreewalk(tree, no, children):
-    """As octree.SetupTreewalk, for the DynamicOctree: link FirstSubnode/NextBranch for
-    iterative traversal."""
+    """As octree.SetupTreewalk, for the DynamicOctree: link FirstSubnode/NextBranch for iterative traversal."""
     # print(no)
     if no < tree.NumParticles:
         return  # leaf nodes are handled from above

@@ -1,18 +1,10 @@
 """Grouped/vectorized Barnes-Hut treewalk: one traversal per spatially-compact group of targets.
 
-One traversal per *group* of consecutive (Morton-sorted, hence spatially compact) targets rather than
-per target; at every accepted element the kernel inner-loops over the group.  The win is *amortizing
-the traversal*: the branchy pointer-chasing descent (a step costs ~3x a force-pair evaluation) runs
-~group_size times fewer, which more than pays for the extra force-pairs grouping incurs.  It is NOT
-SIMD -- the inner loop's branches and ForceKernel call keep it scalar, and fastmath moves runtime ~2%.
+One traversal per *group* of consecutive (Morton-sorted, hence spatially compact) targets rather than per target; at every accepted element the kernel inner-loops over the group.  The win is *amortizing the traversal*: the branchy pointer-chasing descent (a step costs ~3x a force-pair evaluation) runs ~group_size times fewer, which more than pays for the extra force-pairs grouping incurs.  It is NOT SIMD -- the inner loop's branches and ForceKernel call keep it scalar, and fastmath moves runtime ~2%.
 
-Acceptance uses the group bbox's nearest distance (r_min) and max softening, strictly more
-conservative than per-particle, so a superset of nodes opens: accuracy is equal-or-better for a given
-theta, at the cost of more force-pairs.  group_size=1 reproduces the per-particle walk; the optimum
-(~8) is where amortization saturates before interaction-list bloat dominates.
+Acceptance uses the group bbox's nearest distance (r_min) and max softening, strictly more conservative than per-particle, so a superset of nodes opens: accuracy is equal-or-better for a given theta, at the cost of more force-pairs.  group_size=1 reproduces the per-particle walk; the optimum (~8) is where amortization saturates before interaction-list bloat dominates.
 
-The traversal core is shared; only the small ``inline='always'`` per-interaction kernel varies
-(monopole/quadrupole x potential/acceleration), and numba inlines it, so sharing costs a few percent.
+The traversal core is shared; only the small ``inline='always'`` per-interaction kernel varies (monopole/quadrupole x potential/acceleration), and numba inlines it, so sharing costs a few percent.
 """
 
 import numpy as np
@@ -85,9 +77,7 @@ def _accel_quad(no, a, b, pos, soft, tree, acc):
 
     Leaf particles carry no quadrupole moment, so they contribute only the softened monopole.
 
-    Components and the separation vector are held in scalars: a ``tree.Quadrupoles[no]`` view or an
-    ``np.empty(3)`` inside the target loop costs one NRT allocation per target, and the allocator
-    contention made this kernel *anti-scale* -- slower on 8 threads than 1, ~30x monopole cost at 32.
+    Components and the separation vector are held in scalars: a ``tree.Quadrupoles[no]`` view or an ``np.empty(3)`` inside the target loop costs one NRT allocation per target, and the allocator contention made this kernel *anti-scale* -- slower on 8 threads than 1, ~30x monopole cost at 32.
     """
     cx = tree.Coordinates[no, 0]
     cy = tree.Coordinates[no, 1]
@@ -136,9 +126,7 @@ def _accel_quad(no, a, b, pos, soft, tree, acc):
 def _pot_quad(no, a, b, pos, soft, tree, acc):
     """Add source ``no``'s potential to every target in [a, b), with the quadrupole term for nodes.
 
-    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes
-    add the quadrupole correction.  Components are hoisted out of the target loop for the same
-    allocation reason as in :func:`_accel_quad`.
+    Leaf particles carry no quadrupole moment, so they contribute only the softened monopole; nodes add the quadrupole correction.  Components are hoisted out of the target loop for the same allocation reason as in :func:`_accel_quad`.
     """
     cx = tree.Coordinates[no, 0]
     cy = tree.Coordinates[no, 1]
@@ -188,18 +176,13 @@ def _pot_quad(no, a, b, pos, soft, tree, acc):
 def _make_core(kernel, parallel):
     """Build a jitted grouped-walk core specialized to ``kernel`` (inlined) and ``parallel``.
 
-    Returns a njit function core(pos, soft, tree, group_size, theta, G, W) -> (N, W) field array,
-    where W is the output width (3 for acceleration, 1 for potential) and pos/soft are in tree
-    (Morton) order.  Separate instances are built per kernel so numba inlines each kernel.
+    Returns a njit function core(pos, soft, tree, group_size, theta, G, W) -> (N, W) field array, where W is the output width (3 for acceleration, 1 for potential) and pos/soft are in tree (Morton) order.  Separate instances are built per kernel so numba inlines each kernel.
     """
 
     def core(pos, soft, tree, group_size, theta, G, W):
         """Grouped Barnes-Hut walk: traverse the tree once per group of ``group_size`` targets.
 
-        For each group, computes its bounding box and max softening, descends the tree accepting or
-        opening nodes by the group's nearest-corner distance (r_min) and max softening, and lets
-        ``kernel`` accumulate each accepted element's contribution over the group's targets.  Returns
-        G times the accumulated field as an (N, W) array in the input (Morton) order.
+        For each group, computes its bounding box and max softening, descends the tree accepting or opening nodes by the group's nearest-corner distance (r_min) and max softening, and lets ``kernel`` accumulate each accepted element's contribution over the group's targets.  Returns G times the accumulated field as an (N, W) array in the input (Morton) order.
         """
         N = pos.shape[0]
         out = np.zeros((N, W))
@@ -316,8 +299,7 @@ def AccelTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrup
 def PotentialTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
     """Gravitational potential at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
 
-    Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,) array of
-    potentials in the same order as ``pos``.
+    Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,) array of potentials in the same order as ``pos``.
     """
     core = (_pot_quad_core if quadrupole else _pot_core)[1 if parallel else 0]
     return core(pos, soft, tree, group_size, theta, G, 1)[:, 0]
