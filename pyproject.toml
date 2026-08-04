@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pytreegrav"
-version = "1.3.0"
+version = "1.4.0"
 description = "Fast approximate gravitational force and potential calculations"
 readme = "README.md"
 authors = [{ name = "Mike Grudic", email = "mike.grudich@gmail.com" }]
