@@ -26,3 +26,9 @@ venv/
 # published copies live in images/ and the raw timings in examples/benchmark_scaling.json
 examples/benchmark_scaling.png
 examples/error_benchmark.png
+
+# Figures and arrays that ad-hoc benchmarking drops in the repo root. Anchored with a leading
+# slash so the tracked figures under images/, docs/ and examples/ are unaffected.
+/*.png
+/*.npy
+/*.npz
