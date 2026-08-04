@@ -950,9 +950,11 @@ def ColumnDensity(
         per-target walk.
     device: str, optional
         'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and applies only
-        to the ray-traced path (rays given, randomize_rays off). It is float32, so expect ~1e-5
-        relative error rather than the CPU path's 1e-15, and it repacks and uploads the tree on
-        every call -- for repeated evaluation hold a pytreegrav.cuda.CudaColumnDensity instead.
+        to the ray-traced path (rays given, randomize_rays off). It is float32: on a real STARFORGE
+        snapshot the relative error against this float64 path was 2e-6 median, 9e-4 at p99.99 and
+        2.5e-2 at worst, the largest errors falling on the densest sightlines. It also repacks and
+        uploads the tree on every call -- for repeated evaluation hold a
+        pytreegrav.cuda.CudaColumnDensity instead. Expect ~8x on clustered production data.
 
     Returns
     -------
