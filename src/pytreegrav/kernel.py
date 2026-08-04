@@ -25,6 +25,31 @@ def ForceKernel(r, h):
         )
 
 
+@njit(fastmath=True, cache=True)
+def TidalKernel(r, h):
+    """
+    Returns the coefficient of dx_i dx_j in the softened tidal tensor of a cubic-spline mass distribution of compact support radius h, equal to -(1/r) d/dr [M(<r)/(M r^3)].
+
+    The tidal tensor of a single element of mass m at separation dx = x_source - x_target is then T_ij = G m (TidalKernel(r,h) dx_i dx_j - ForceKernel(r,h) delta_ij), reducing to the point-mass 3 dx_i dx_j / r^5 - delta_ij / r^3 for r > h. Unlike 3/r^5 it is finite at r=0, approaching 384/(5 h^5).
+
+    Arguments:
+    r - radius
+    h - softening
+    """
+    if r > h:
+        r2 = r * r
+        return 3.0 / (r2 * r2 * r)
+    hinv = 1.0 / h
+    hinv2 = hinv * hinv
+    hinv5 = hinv2 * hinv2 * hinv
+    q = r * hinv
+    if q <= 0.5:
+        return (76.8 - 96.0 * q) * hinv5
+    qinv = 1.0 / q
+    qinv3 = qinv * qinv * qinv
+    return (48.0 * qinv - 76.8 + 32.0 * q - 0.2 * qinv3 * qinv * qinv) * hinv5
+
+
 @njit(fastmath=True, cache=True)  # ([float64(float64,float64)])
 def PotentialKernel(r, h):
     """
