@@ -15,6 +15,9 @@ jobs:
   pytest:
     name: pytest (python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # The suite runs in ~7 minutes; without a limit a hang would sit on a runner for the default
+    # 6 hours. Generous enough to absorb a slow runner, tight enough that a real hang fails visibly.
+    timeout-minutes: 25
     strategy:
       fail-fast: false          # report every version's result, not just the first failure
       matrix:
