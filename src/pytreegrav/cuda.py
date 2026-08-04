@@ -8,7 +8,7 @@ Deliberately not imported by ``pytreegrav/__init__.py``, so ``import pytreegrav`
 
 or pass ``device="cuda"`` to ColumnDensity/Potential/Accel, which uploads on every call.
 
-On an RTX A6000 against the grouped CPU walks on 32 Xeon Gold 6244 threads, on a 22.3M-particle STARFORGE snapshot: ~12x for 6-ray column density, ~21x for monopole gravity with the context reused (~15x single-shot, a gravity walk being short enough that the pack-and-upload is a third of one call), and 387 Gpair/s brute force against roughly 10.  Clustered data is the harder case -- very unequal walks in one warp, and a 6 MB L2 -- so expect these figures rather than the better ones smooth synthetic clouds give.
+On an RTX A6000 against the grouped CPU walks on 32 Xeon Gold 6244 threads, on a clustered 22.3M-particle astrophysical snapshot: ~12x for 6-ray column density, ~21x for monopole gravity with the context reused (~15x single-shot, a gravity walk being short enough that the pack-and-upload is a third of one call), and 387 Gpair/s brute force against roughly 10.  Clustered data is the harder case -- very unequal walks in one warp, and a 6 MB L2 -- so expect these figures rather than the better ones smooth synthetic clouds give.
 
 All three give each thread one independent stackless cursor, its whole state a single integer threaded through NextBranch/FirstSubnode: no warp intrinsics, and none of the local memory a per-thread traversal stack would need.  Grouping is left to the warp, since 32 Morton-adjacent targets hold the same node index for most of the descent and the row fetch broadcasts -- the amortization the CPU's grouped walks buy by hand, without the acceptance-radius padding they pay for it.
 
@@ -282,8 +282,8 @@ class CudaColumnDensity:
 # --------------------------------------------------------------------------------------------------
 # Gravity.  Same stackless per-target walk, monopole only.
 #
-# float32 is safe here, measured not assumed.  Measured error against the float64 walk on a STARFORGE
-# snapshot: potential 5.5e-08 median / 1.2e-03 worst, accel 5.7e-07 / 5.3e-03.  The tail is not
+# float32 is safe here, measured not assumed.  Measured error against the float64 walk on a clustered
+# production snapshot: potential 5.5e-08 median / 1.2e-03 worst, accel 5.7e-07 / 5.3e-03.  The tail is not
 # roundoff -- it is the acceptance test flipping for a node on the opening-angle boundary, so it is
 # bounded by theta's own ~2e-03 truncation error rather than by epsilon.  Potential fares better
 # because every term shares a sign (no cancellation); accel's is a vector residual.

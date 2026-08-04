@@ -246,8 +246,8 @@ def Potential(
         else:
             # SORT pos; don't apply the tree's stored permutation. TreewalkIndices is a fixed sigma
             # over whatever built the tree, and is not an involution -- pos already in tree order
-            # becomes X[sigma^2]: right answer, but grouping's acceptance padding inflates 94x in a
-            # STARFORGE snapshot's densest decile (p90 group extent 0.115 -> 10.9 pc), 15 s -> 285 s.
+            # becomes X[sigma^2]: right answer, but the groups are no longer spatially compact, so
+            # grouping's acceptance padding inflated ~94x on clustered data: 15 s -> 285 s.
             # A larger supplied tree raises IndexError outright. Sorting is idempotent, fixing both.
             idx = _morton_order(_f64(pos))
         checkTreeQuadrupoles(tree, quadrupole)
@@ -511,8 +511,8 @@ def Accel(
         else:
             # SORT pos; don't apply the tree's stored permutation. TreewalkIndices is a fixed sigma
             # over whatever built the tree, and is not an involution -- pos already in tree order
-            # becomes X[sigma^2]: right answer, but grouping's acceptance padding inflates 94x in a
-            # STARFORGE snapshot's densest decile (p90 group extent 0.115 -> 10.9 pc), 15 s -> 285 s.
+            # becomes X[sigma^2]: right answer, but the groups are no longer spatially compact, so
+            # grouping's acceptance padding inflated ~94x on clustered data: 15 s -> 285 s.
             # A larger supplied tree raises IndexError outright. Sorting is idempotent, fixing both.
             idx = _morton_order(_f64(pos))
         checkTreeQuadrupoles(tree, quadrupole)
