@@ -12,34 +12,42 @@ particles (33.5M nodes):
 
    * - problem
      - CPU 32t
-     - CUDA
      - context reused
-     - single call
+     - speedup
+     - one ``device="cuda"`` call
+     - speedup
    * - ``ColumnDensity``, 6 rays (134M walks)
-     - 638 s
-     - 52 s
-     - **12.3x**
-     - 12.2x
+     - 639 s
+     - 52.7 s
+     - **12.1x**
+     - 56.8 s
+     - **11.3x**
    * - monopole ``Potential``
-     - 19.0 s
-     - 0.91 s
-     - **20.9x**
-     - 14.2x
+     - 18.4 s
+     - 0.58 s
+     - **31.7x**
+     - 4.8 s
+     - **3.8x**
    * - monopole ``Accel``
-     - 21.1 s
-     - 0.99 s
-     - **21.4x**
-     - 14.9x
+     - 20.7 s
+     - 0.65 s
+     - **31.6x**
+     - 5.2 s
+     - **3.9x**
    * - brute force, pair rate at :math:`N = 2.6 \times 10^5`
      - ~10 Gpair/s
      - 387 Gpair/s
      - **~40x**
      - --
+     - --
 
-The two columns differ by the one-off pack-and-upload of the tree, 0.43 s for gravity and 0.54 s here:
-0.12 s to build the packed rows and the rest PCIe. It is negligible against a 52 s column-density pass and
-a third of a 0.9 s gravity walk, which is why gravity in particular still wants a held context. (The
-*first* large device allocation in a process costs an extra ~0.6 s on top, once.)
+The two speedup columns differ by everything a stateless call has to redo, which is more than the upload:
+Morton-ordering the targets, narrowing them to float32, packing and uploading the tree (0.3-0.4 s, of which
+0.13 s builds the packed rows and the rest is PCIe), then scattering the result back. Against a 53 s
+column-density pass that is noise; against a 0.58 s gravity walk it is the entire cost, which is why
+gravity in particular wants a held context -- an 8x difference. The context figures assume you keep the
+targets in float32, as a caller evaluating repeatedly would. (The *first* large device allocation in a
+process costs an extra ~0.6 s on top, once.)
 
 Clustered structure is the harder case for a GPU: a warp can hold both dense-core and diffuse-gas
 sightlines at once, so lanes wait on each other, and the packed tree is over 1 GB against a 6 MB L2.
@@ -97,7 +105,7 @@ Pass :code:`device="cuda"` to :func:`~pytreegrav.frontend.ColumnDensity`:
 
     columns = ColumnDensity(x, m, h, rays=6, device="cuda")
 
-This repacks and uploads the tree on every call, which for column density is a rounding error: 0.54 s
+This repacks and uploads the tree on every call, which for column density is a rounding error: 0.39 s
 against a 52 s pass at :math:`N = 2.2 \times 10^7`. Holding a context is worth much more for gravity,
 whose walks are short enough for that fixed cost to matter.
 
@@ -152,9 +160,9 @@ N-body step, or a binding-energy sweep over many candidate groups:
 ``theta`` is a per-call argument rather than baked into the packed tree, so one upload serves any
 opening angle.
 
-Hold the context if you can. Gravity walks are short -- under 0.1 us per particle on the device -- so the
-one-off pack-and-upload is a third of a single call: on the snapshot above, 20.9x with the context reused
-against 14.2x for a bare ``Potential(..., device="cuda")``.
+Hold the context if you can. Gravity walks are short -- under 0.03 us per particle on the device -- so a
+stateless call spends most of its time reordering and uploading rather than walking: on the snapshot above,
+31.7x with the context reused against 3.8x for a bare ``Potential(..., device="cuda")``.
 
 Accuracy on that snapshot, against two different CPU references, because the choice matters more than
 the precision does:
