@@ -2,9 +2,9 @@
 
 The frontend used to permute ``pos`` by ``tree.TreewalkIndices``, a fixed sigma over whatever built
 the tree. A larger supplied tree then raised IndexError, and since sigma is not an involution, a caller
-who had already tree-ordered ``pos`` got X[sigma^2] -- the right answer, but with grouping's acceptance
-padding inflated ~94x in a STARFORGE snapshot's densest regions, 15 s -> over 285 s at N=2.5e7. Sorting
-is idempotent and indexes ``pos`` by construction, so it covers both.
+who had already tree-ordered ``pos`` got X[sigma^2] -- the right answer, but with groups no longer
+spatially compact, inflating grouping's acceptance padding ~94x on clustered data: 15 s -> over 285 s at
+N=2.5e7. Sorting is idempotent and indexes ``pos`` by construction, so it covers both.
 """
 
 import numpy as np

@@ -222,7 +222,7 @@ NH_eff = Σ_eff X_H / m_p  # column density in H nuclei code length^-2
 ## GPU-accelerated ray-tracing (optional)
 
 The ray-traced path has an optional CUDA backend. On an RTX A6000 against 32 Xeon Gold 6244 threads it
-is **12.3x** faster on a real STARFORGE snapshot (22.3M gas particles, 6 rays, 134M walks: 52 s against
+is **12.3x** faster on a real astrophysical snapshot (22.3M gas particles, 6 rays, 134M walks: 52 s against
 638 s). Clustered data is the harder case: a warp can hold both dense-core and diffuse-gas sightlines, so
 lanes wait on each other, and the tree no longer fits in cache — smooth synthetic clouds do better, so
 take this as the figure to expect on production data.

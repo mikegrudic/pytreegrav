@@ -4,8 +4,8 @@ GPU acceleration
 ================
 
 Column density, monopole tree gravity and brute-force gravity have an optional CUDA backend. Measured on
-an NVIDIA RTX A6000 against 32 Xeon Gold 6244 threads, on a STARFORGE snapshot with 22.3M gas particles
-(33.5M nodes):
+an NVIDIA RTX A6000 against 32 Xeon Gold 6244 threads, on a clustered astrophysical snapshot with 22.3M gas
+particles (33.5M nodes):
 
 .. list-table::
    :header-rows: 1
