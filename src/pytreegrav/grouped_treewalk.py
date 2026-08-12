@@ -361,7 +361,9 @@ def _morton_order(points):
 GROUP_SIZE_DEFAULT = 32
 
 
-def AccelTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+def AccelTarget_grouped(
+    pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True
+):
     """Gravitational acceleration at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
 
     Arguments:
@@ -393,7 +395,9 @@ def AccelTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, t
     )["accel"]
 
 
-def PotentialTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+def PotentialTarget_grouped(
+    pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True
+):
     """Gravitational potential at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
 
     Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,) array of potentials in the same order as ``pos``.
@@ -411,7 +415,9 @@ def PotentialTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.
     )["potential"]
 
 
-def TidalTensorTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+def TidalTensorTarget_grouped(
+    pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True
+):
     """Tidal tensor at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
 
     Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,3,3) array of tidal tensors in the same order as ``pos``; the core accumulates them flattened, and the reshape is a view.

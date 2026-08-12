@@ -938,7 +938,9 @@ class Field:
     The sources are fixed once the tree is built. Move the particles and you need a new ``Field``.
     """
 
-    def __init__(self, pos, m, softening=None, G=1.0, theta=0.7, quadrupole=False, group_size=GROUP_SIZE_DEFAULT, parallel=False):
+    def __init__(
+        self, pos, m, softening=None, G=1.0, theta=0.7, quadrupole=False, group_size=GROUP_SIZE_DEFAULT, parallel=False
+    ):
         # coerce exactly as the functional API does -- see the note in Accel
         pos = np.atleast_2d(_f64(pos))
         m = np.atleast_1d(_f64(m))
