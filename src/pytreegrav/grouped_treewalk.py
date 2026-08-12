@@ -1,8 +1,8 @@
 """Grouped/vectorized Barnes-Hut treewalk: one traversal per spatially-compact group of targets.
 
-One traversal per *group* of consecutive (Morton-sorted, hence spatially compact) targets rather than per target; at every accepted element the kernel inner-loops over the group.  The win is *amortizing the traversal*: the branchy pointer-chasing descent (a step costs ~3x a force-pair evaluation) runs ~group_size times fewer, which more than pays for the extra force-pairs grouping incurs.  It is NOT SIMD -- the inner loop's branches and ForceKernel call keep it scalar, and fastmath moves runtime ~2%.
+One traversal per *group* of targets rather than per target; at every accepted element the kernel inner-loops over the group.  The win is *amortizing the traversal*: the branchy pointer-chasing descent (a step costs ~3x a force-pair evaluation) runs ~group_size times fewer, which more than pays for the extra force-pairs grouping incurs.  It is NOT SIMD -- the inner loop's branches and ForceKernel call keep it scalar, and fastmath moves runtime ~2%.
 
-Acceptance uses the group bbox's nearest distance (r_min) and max softening, strictly more conservative than per-particle, so a superset of nodes opens: accuracy is equal-or-better for a given theta, at the cost of more force-pairs.  group_size=1 reproduces the per-particle walk; the optimum (~8) is where amortization saturates before interaction-list bloat dominates.
+Acceptance uses the group bbox's nearest distance (r_min) and max softening, strictly more conservative than per-particle, so a superset of nodes opens: accuracy is equal-or-better for a given theta, at the cost of more force-pairs.  A group whose bbox is large therefore opens a lot of tree, so the grouping must keep bboxes small: groups are the cells of the implicit octree on the *targets* (:func:`_group_offsets`), never fixed-size runs of the Morton order.  group_size=1 reproduces the per-particle walk.
 
 The traversal core is shared; only the small ``inline='always'`` per-interaction kernel varies, and numba inlines it, so sharing costs a few percent.  That kernel is generated from a single parameterized source (:func:`_make_field_kernel`) specialized on which of potential/acceleration/tidal-tensor are wanted and whether quadrupoles are in play -- so any subset can be had from ONE traversal, and there is one copy of the arithmetic rather than one per field.
 """
@@ -13,7 +13,7 @@ from numba import njit, prange, parallel_chunksize
 
 from .kernel import ForceKernel, PotentialKernel, TidalKernel
 from .treewalk import acceptance_criterion
-from .octree import _morton_keys, _radix_argsort
+from .octree import MORTON_BITS, _bounding_cube, _morton_keys, _octant_runs, _radix_argsort
 
 
 # --------------------------------------------------------------------------------------------------
@@ -156,6 +156,83 @@ def _make_field_kernel(want_pot, want_accel, want_tidal, quadrupole):
 
 
 # --------------------------------------------------------------------------------------------------
+# Group formation.
+#
+# Acceptance is by the group's bounding box, so a group with a large bbox opens a large part of the
+# tree -- in the limit r_min = 0 for every node and the walk degenerates to brute force.  Cutting the
+# Morton order into fixed-size runs does not bound the bbox: the curve leaps between distant cells at
+# every level boundary, and a run straddling one spans the whole domain.  Measured at N=3e5, g=8,
+# theta=0.7 on a uniform cube, the six runs straddling a top-level octant boundary each did 27-58x
+# the median run's interactions, and on a Plummer sphere one run touched every source particle
+# individually.  For targets sparser than the sources it is not a tail at all but the whole cost:
+# 1024 targets spread over the source volume did 28x the force-pairs of the per-target walk.
+#
+# So groups are cells of the implicit octree on the targets instead: descend the Morton digits and
+# emit a run once it holds <= max_group targets.  A group then lies inside one octree cell by
+# construction -- it cannot straddle a leap, and its extent tracks the local target density rather
+# than whatever the stride happened to catch.
+# --------------------------------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _group_offsets(pos, max_group):
+    """Group boundaries for Morton-sorted ``pos``: group gi is ``[off[gi], off[gi+1])``.
+
+    ``pos`` must already be Morton-sorted (the frontend guarantees this); the keys are recomputed
+    here rather than threaded through, which is one linear pass and no sort.  The cube is taken the
+    same way :func:`_morton_order` and the tree build take it, so the recomputed keys match the ones
+    the ordering was produced from and are non-decreasing -- which is what lets ``_octant_runs``
+    binary-search them.
+    """
+    N = pos.shape[0]
+    off = np.empty(N + 1, dtype=np.int64)
+    if N == 0:
+        off[0] = 0
+        return off[:1].copy()
+    if max_group < 1:
+        max_group = 1  # a non-positive cap would hang the coincident-point chop below
+    center, size = _bounding_cube(pos)
+    keys = _morton_keys(pos, center, size)
+
+    # Each pop pushes at most 8 and shrinks the remaining depth by one, so the stack never exceeds
+    # 7 * (MORTON_BITS + 1) + 1 entries -- bounded, hence no growth path.
+    cap = 8 * (MORTON_BITS + 1)
+    st_lo = np.empty(cap, dtype=np.int64)
+    st_hi = np.empty(cap, dtype=np.int64)
+    st_sh = np.empty(cap, dtype=np.int64)
+    st_lo[0], st_hi[0], st_sh[0] = 0, N, 3 * (MORTON_BITS - 1)
+    top = 1
+    noff = 0
+    bs = np.empty(8, dtype=np.int64)
+    be = np.empty(8, dtype=np.int64)
+    bd = np.empty(8, dtype=np.int64)
+    # LIFO with the octant runs pushed in reverse, so they pop in ascending order and the offsets
+    # come out sorted -- no sort pass over the emitted groups.
+    while top > 0:
+        top -= 1
+        lo = st_lo[top]
+        hi = st_hi[top]
+        shift = st_sh[top]
+        if hi - lo <= max_group:
+            off[noff] = lo
+            noff += 1
+        elif shift < 0:
+            # coincident points: the key cannot separate them any further, so chop to size.  The
+            # bbox is degenerate either way; this only keeps group sizes bounded.
+            while lo < hi:
+                off[noff] = lo
+                noff += 1
+                lo += max_group
+        else:
+            nb = _octant_runs(keys, lo, hi, shift, bs, be, bd)
+            for b in range(nb - 1, -1, -1):
+                st_lo[top], st_hi[top], st_sh[top] = bs[b], be[b], shift - 3
+                top += 1
+    off[noff] = N
+    return off[: noff + 1].copy()  # copy so the length-N scratch buffer is not kept alive
+
+
+# --------------------------------------------------------------------------------------------------
 # Shared traversal core.  Factory specializes it per kernel so the kernel inlines.
 # --------------------------------------------------------------------------------------------------
 
@@ -163,22 +240,22 @@ def _make_field_kernel(want_pot, want_accel, want_tidal, quadrupole):
 def _make_core(kernel, parallel):
     """Build a jitted grouped-walk core specialized to ``kernel`` (inlined) and ``parallel``.
 
-    Returns a njit function core(pos, soft, tree, group_size, theta, G, W) -> (N, W) field array, where W is the output width (3 for acceleration, 1 for potential) and pos/soft are in tree (Morton) order.  Separate instances are built per kernel so numba inlines each kernel.
+    Returns a njit function core(pos, soft, tree, group_off, theta, G, W) -> (N, W) field array, where W is the output width (3 for acceleration, 1 for potential) and pos/soft are in tree (Morton) order.  Separate instances are built per kernel so numba inlines each kernel.
     """
 
-    def core(pos, soft, tree, group_size, theta, G, W):
-        """Grouped Barnes-Hut walk: traverse the tree once per group of ``group_size`` targets.
+    def core(pos, soft, tree, group_off, theta, G, W):
+        """Grouped Barnes-Hut walk: traverse the tree once per group in ``group_off``.
 
         For each group, computes its bounding box and max softening, descends the tree accepting or opening nodes by the group's nearest-corner distance (r_min) and max softening, and lets ``kernel`` accumulate each accepted element's contribution over the group's targets.  Returns G times the accumulated field as an (N, W) array in the input (Morton) order.
         """
         N = pos.shape[0]
         out = np.zeros((N, W))
-        ngroups = (N + group_size - 1) // group_size
+        ngroups = group_off.shape[0] - 1
         # scoped, not global -- see the note in treewalk.PotentialTarget_tree
         with parallel_chunksize(64):
             for gi in prange(ngroups):
-                a = gi * group_size
-                b = min(a + group_size, N)
+                a = group_off[gi]
+                b = group_off[gi + 1]
                 m = b - a
                 # group bounding box + max softening
                 bmin0 = pos[a, 0]
@@ -276,13 +353,15 @@ def _morton_order(points):
 
 
 # --------------------------------------------------------------------------------------------------
-# Public wrappers.  pos/soft must already be in a spatially-compact order for grouping to help; the
-# frontend feeds Morton order (self-gravity is pre-sorted, external targets are sorted via
-# _morton_order).  group_size=1 reproduces the per-particle walk.
+# Public wrappers.  pos/soft must already be in Morton order -- the frontend feeds it (self-gravity is
+# pre-sorted, external targets are sorted via _morton_order) and _group_offsets relies on it.
+# group_size=1 reproduces the per-particle walk.
 # --------------------------------------------------------------------------------------------------
 
+GROUP_SIZE_DEFAULT = 32
 
-def AccelTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+
+def AccelTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True):
     """Gravitational acceleration at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
 
     Arguments:
@@ -290,7 +369,10 @@ def AccelTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrup
     soft -- shape (N,) minimum softening length of each target
     tree -- Octree containing the source mass distribution
     Keyword arguments:
-    group_size -- targets per group (default 8); 1 reproduces the per-particle walk
+    group_size -- MAXIMUM targets per group (default 32); groups are octree cells of the target
+        distribution, so the mean is smaller and varies with clustering.  1 reproduces the
+        per-particle walk.  Larger amortizes the traversal harder but widens the group bboxes, which
+        costs force-pairs; lower it toward 8 when the targets are sparse relative to the sources
     G -- gravitational constant (default 1.0)
     theta -- opening-angle accuracy parameter (default 0.7)
     quadrupole -- include quadrupole moments (default False); requires a tree built with quadrupole=True
@@ -311,7 +393,7 @@ def AccelTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrup
     )["accel"]
 
 
-def PotentialTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+def PotentialTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True):
     """Gravitational potential at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
 
     Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,) array of potentials in the same order as ``pos``.
@@ -329,7 +411,7 @@ def PotentialTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, qua
     )["potential"]
 
 
-def TidalTensorTarget_grouped(pos, soft, tree, group_size=8, G=1.0, theta=0.7, quadrupole=False, parallel=True):
+def TidalTensorTarget_grouped(pos, soft, tree, group_size=GROUP_SIZE_DEFAULT, G=1.0, theta=0.7, quadrupole=False, parallel=True):
     """Tidal tensor at ``pos`` from ``tree``, via the grouped Barnes-Hut walk.
 
     Arguments and keywords match :func:`AccelTarget_grouped`.  Returns a shape (N,3,3) array of tidal tensors in the same order as ``pos``; the core accumulates them flattened, and the reshape is a view.
@@ -354,7 +436,7 @@ def FieldsTarget_grouped(
     potential=False,
     accel=False,
     tidal=False,
-    group_size=8,
+    group_size=GROUP_SIZE_DEFAULT,
     G=1.0,
     theta=0.7,
     quadrupole=False,
@@ -383,7 +465,8 @@ def FieldsTarget_grouped(
     if not (potential or accel or tidal):
         raise ValueError("request at least one of potential=True, accel=True, tidal=True")
     core = _get_core(potential, accel, tidal, quadrupole, parallel)
-    out = core(pos, soft, tree, group_size, theta, G, _field_width(potential, accel, tidal))
+    group_off = _group_offsets(np.ascontiguousarray(pos), group_size)
+    out = core(pos, soft, tree, group_off, theta, G, _field_width(potential, accel, tidal))
     result = {}
     o = 0
     if potential:
