@@ -139,8 +139,10 @@ def test_per_call_overrides():
     """theta/parallel/group_size override the constructor defaults for that call only."""
     x, m, h = cloud(2000, seed=8)
     f = Field(x, m, h, theta=0.7, parallel=False, group_size=8)
-    assert np.array_equal(f.potential(theta=0.4), Field(x, m, h, theta=0.4).potential())
-    assert np.array_equal(f.accel(parallel=True), Field(x, m, h, theta=0.7, parallel=True).accel())
+    # group_size must be pinned on both sides: it changes which nodes open, so leaving the reference
+    # on the default would test the default's value rather than the override mechanism.
+    assert np.array_equal(f.potential(theta=0.4), Field(x, m, h, theta=0.4, group_size=8).potential())
+    assert np.array_equal(f.accel(parallel=True), Field(x, m, h, theta=0.7, parallel=True, group_size=8).accel())
     assert np.array_equal(f.tidal(group_size=1), Field(x, m, h, theta=0.7, group_size=1).tidal())
     # and the defaults are untouched afterwards
     assert (f.theta, f.parallel, f.group_size) == (0.7, False, 8)

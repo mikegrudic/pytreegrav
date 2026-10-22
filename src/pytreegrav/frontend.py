@@ -6,6 +6,7 @@ from .octree import *
 from .dynamic_tree import *
 from .treewalk import *
 from .grouped_treewalk import (
+    GROUP_SIZE_DEFAULT,
     AccelTarget_grouped,
     FieldsTarget_grouped,
     PotentialTarget_grouped,
@@ -153,7 +154,7 @@ def Potential(
     parallel=False,
     method="adaptive",
     quadrupole=False,
-    group_size=8,
+    group_size=GROUP_SIZE_DEFAULT,
     device="cpu",
 ):
     """Gravitational potential calculation
@@ -183,7 +184,7 @@ def Potential(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
+        Maximum targets sharing one tree traversal, amortizing the dominant traversal cost (default 32). Groups are cells of the octree on the targets, so the mean is smaller than this and varies with clustering. 1 reproduces the per-particle walk; larger amortizes harder but widens the group bounding boxes, which opens more nodes -- lower it toward 8 when the targets are sparse relative to the sources. Only affects the tree method.
 
     device: str, optional
         'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call, which for gravity costs more than the walk does -- measured ~4x faster than 32 CPU threads at N=2.2e7, against ~32x with the tree already resident -- so for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
@@ -306,7 +307,7 @@ def PotentialTarget(
     parallel=False,
     method="adaptive",
     quadrupole=False,
-    group_size=8,
+    group_size=GROUP_SIZE_DEFAULT,
 ):
     """Gravitational potential calculation for general N+M body case
 
@@ -339,7 +340,7 @@ def PotentialTarget(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
+        Maximum targets sharing one tree traversal, amortizing the dominant traversal cost (default 32). Groups are cells of the octree on the targets, so the mean is smaller than this and varies with clustering. 1 reproduces the per-particle walk; larger amortizes harder but widens the group bounding boxes, which opens more nodes -- lower it toward 8 when the targets are sparse relative to the sources. Only affects the tree method.
 
     Returns
     -------
@@ -429,7 +430,7 @@ def Accel(
     parallel=False,
     method="adaptive",
     quadrupole=False,
-    group_size=8,
+    group_size=GROUP_SIZE_DEFAULT,
     device="cpu",
 ):
     """Gravitational acceleration calculation
@@ -459,7 +460,7 @@ def Accel(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
+        Maximum targets sharing one tree traversal, amortizing the dominant traversal cost (default 32). Groups are cells of the octree on the targets, so the mean is smaller than this and varies with clustering. 1 reproduces the per-particle walk; larger amortizes harder but widens the group bounding boxes, which opens more nodes -- lower it toward 8 when the targets are sparse relative to the sources. Only affects the tree method.
 
     device: str, optional
         'cpu' (default) or 'cuda'. 'cuda' needs pytreegrav[cuda] and an NVIDIA GPU, and covers the monopole tree and brute-force methods. It is float32, but its error against the CPU path stays below theta's own truncation error. Uploads the tree (or sources) on every call, which for gravity costs more than the walk does -- measured ~4x faster than 32 CPU threads at N=2.2e7, against ~32x with the tree already resident -- so for repeated evaluation hold a pytreegrav.cuda.CudaPotential/CudaAccel or their Bruteforce counterparts instead.
@@ -573,7 +574,7 @@ def AccelTarget(
     parallel=False,
     method="adaptive",
     quadrupole=False,
-    group_size=8,
+    group_size=GROUP_SIZE_DEFAULT,
 ):
     """Gravitational acceleration calculation for general N+M body case
 
@@ -606,7 +607,7 @@ def AccelTarget(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8, ~2-3x faster than 1 at equal-or-better accuracy; much larger values slow down again as group bounding boxes open more nodes). 1 reproduces the per-particle walk. Only affects the tree method.
+        Maximum targets sharing one tree traversal, amortizing the dominant traversal cost (default 32). Groups are cells of the octree on the targets, so the mean is smaller than this and varies with clustering. 1 reproduces the per-particle walk; larger amortizes harder but widens the group bounding boxes, which opens more nodes -- lower it toward 8 when the targets are sparse relative to the sources. Only affects the tree method.
 
     Returns
     -------
@@ -696,7 +697,7 @@ def TidalTensor(
     parallel=False,
     method="adaptive",
     quadrupole=False,
-    group_size=8,
+    group_size=GROUP_SIZE_DEFAULT,
 ):
     """Tidal tensor calculation
 
@@ -727,7 +728,7 @@ def TidalTensor(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8). 1 reproduces the per-particle walk. Only affects the tree method.
+        Maximum targets sharing one tree traversal, amortizing the dominant traversal cost (default 32). Groups are cells of the octree on the targets, so the mean is smaller than this and varies with clustering. 1 reproduces the per-particle walk; larger amortizes harder but widens the group bounding boxes, which opens more nodes -- lower it toward 8 when the targets are sparse relative to the sources. Only affects the tree method.
 
     Returns
     -------
@@ -802,7 +803,7 @@ def TidalTensorTarget(
     parallel=False,
     method="adaptive",
     quadrupole=False,
-    group_size=8,
+    group_size=GROUP_SIZE_DEFAULT,
 ):
     """Tidal tensor calculation for general N+M body case
 
@@ -835,7 +836,7 @@ def TidalTensorTarget(
     quadrupole: bool, optional
         Whether to use quadrupole moments in tree summation (default False)
     group_size: int, optional
-        Targets sharing one tree traversal, amortizing the dominant traversal cost (default 8). 1 reproduces the per-particle walk. Only affects the tree method.
+        Maximum targets sharing one tree traversal, amortizing the dominant traversal cost (default 32). Groups are cells of the octree on the targets, so the mean is smaller than this and varies with clustering. 1 reproduces the per-particle walk; larger amortizes harder but widens the group bounding boxes, which opens more nodes -- lower it toward 8 when the targets are sparse relative to the sources. Only affects the tree method.
 
     Returns
     -------
@@ -928,7 +929,7 @@ class Field:
     quadrupole: bool, optional
         build and use node quadrupole moments (default False). Fixed at construction, because it determines what the tree stores.
     group_size: int, optional
-        targets sharing one traversal (default 8)
+        maximum targets sharing one traversal (default 32)
     parallel: bool, optional
         parallelize over groups; may be overridden per call (default False)
 
@@ -937,7 +938,9 @@ class Field:
     The sources are fixed once the tree is built. Move the particles and you need a new ``Field``.
     """
 
-    def __init__(self, pos, m, softening=None, G=1.0, theta=0.7, quadrupole=False, group_size=8, parallel=False):
+    def __init__(
+        self, pos, m, softening=None, G=1.0, theta=0.7, quadrupole=False, group_size=GROUP_SIZE_DEFAULT, parallel=False
+    ):
         # coerce exactly as the functional API does -- see the note in Accel
         pos = np.atleast_2d(_f64(pos))
         m = np.atleast_1d(_f64(m))
