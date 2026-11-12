@@ -1,8 +1,8 @@
 name: GPU Simulator
 
 # Optional, non-required check. The hosted runners have no GPU, so the CUDA
-# tests (tests/test_cuda_gravity.py and tests/test_cuda_column_density.py) are
-# skipped by the needs_cuda marker in tests.yml. This runs them with real PTX
+# tests (tests/test_cuda_*.py) are skipped by the needs_cuda marker in
+# tests.yml. This runs them with real PTX
 # on a simulated NVIDIA H100 (https://github.com/pantheongpu/pantheonsim). A
 # simulator cannot reproduce hardware-specific behavior, races or timing, so
 # it complements real-GPU testing and does not replace it.
@@ -40,7 +40,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      # The step limit is below the job limit so that a hung package install fails
+      # quickly and does not hold a runner for the whole job.
       - name: Set up the simulated GPU and CUDA toolkit
+        timeout-minutes: 35
         uses: pantheongpu/setup-pantheonsim@ca87fe3143b29166822b923d6050945c5179408c # v0.1.5
         with:
           gpu: nvidia/h100
@@ -67,7 +70,7 @@ jobs:
         run: |
           vgpu run python -m pytest -v -rs --durations=10 \
             --junitxml="$RUNNER_TEMP/junit.xml" \
-            tests/test_cuda_gravity.py tests/test_cuda_column_density.py
+            tests/test_cuda_*.py
 
       # The needs_cuda tests skip when no device is found, which would pass
       # silently. A skipped test is a failure here.
