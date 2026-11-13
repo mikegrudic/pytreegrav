@@ -44,7 +44,7 @@ jobs:
       # quickly and does not hold a runner for the whole job.
       - name: Set up the simulated GPU and CUDA toolkit
         timeout-minutes: 35
-        uses: pantheongpu/setup-pantheonsim@ca87fe3143b29166822b923d6050945c5179408c # v0.1.5
+        uses: pantheongpu/setup-pantheonsim@68edfd58c091361dd6baf060b63de412e544d858 # v0.1.7
         with:
           gpu: nvidia/h100
           cuda-toolkit: "13.0"
