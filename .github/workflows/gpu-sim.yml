@@ -1,0 +1,90 @@
+name: GPU Simulator
+
+# Optional, non-required check. The hosted runners have no GPU, so the CUDA
+# tests (tests/test_cuda_*.py) are skipped by the needs_cuda marker in
+# tests.yml. This runs them with real PTX
+# on a simulated NVIDIA H100 (https://github.com/pantheongpu/pantheonsim). A
+# simulator cannot reproduce hardware-specific behavior, races or timing, so
+# it complements real-GPU testing and does not replace it.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths:
+      - "src/pytreegrav/cuda.py"
+      - "src/pytreegrav/octree.py"
+      - "tests/test_cuda_*.py"
+      - "pyproject.toml"
+      - ".github/workflows/gpu-sim.yml"
+
+concurrency:
+  group: gpu-sim-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cuda-tests:
+    name: CUDA tests (CUDA 13.0 and simulated H100)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The step limit is below the job limit so that a hung package install fails
+      # quickly and does not hold a runner for the whole job.
+      - name: Set up the simulated GPU and CUDA toolkit
+        timeout-minutes: 35
+        uses: pantheongpu/setup-pantheonsim@656f502ef4782d94d34d8ddd368e333960609639 # v0.1.8
+        with:
+          gpu: nvidia/h100
+          cuda-toolkit: "13.0"
+
+      # Same as tests.yml plus the cuda extra. numpy is kept below 2.5 because
+      # numba-cuda 0.30 still uses np.row_stack.
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -e ".[cuda]" "numpy<2.5"
+
+      # numba-cuda finds libNVVM in the toolkit through CUDA_HOME.
+      - name: Check that the simulated GPU is visible
+        env:
+          CUDA_HOME: /usr/local/cuda-13.0
+        run: |
+          vgpu run python -c "from pytreegrav.cuda import is_available; from numba import cuda; assert is_available(); print(cuda.get_current_device().name)"
+
+      - name: Run the CUDA tests
+        env:
+          CUDA_HOME: /usr/local/cuda-13.0
+        run: |
+          vgpu run python -m pytest -v -rs --durations=10 \
+            --junitxml="$RUNNER_TEMP/junit.xml" \
+            tests/test_cuda_*.py
+
+      # The needs_cuda tests skip when no device is found, which would pass
+      # silently. A skipped test is a failure here.
+      - name: Fail on skipped tests
+        run: |
+          python - "$RUNNER_TEMP/junit.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          suite = ET.parse(sys.argv[1]).getroot()
+          if suite.tag == "testsuites":
+              suite = suite[0]
+          tests, skipped = int(suite.get("tests")), int(suite.get("skipped"))
+          print(f"{tests} tests, {skipped} skipped")
+          if tests == 0 or skipped:
+              sys.exit("tests were skipped or none ran: the simulated GPU was not used")
+          PY
